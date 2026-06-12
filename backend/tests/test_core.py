@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from lattice.config import Settings, get_settings
 from lattice.core.cost import CostTracker, Usage, estimate_cost, price_for
 from lattice.core.errors import CostCapExceeded
