@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader>
+    <fileDesc>
+      <titleStmt>
+        <title level="a" type="main">Deep Learning for Copper Price Forecasting</title>
+      </titleStmt>
+      <publicationStmt>
+        <date type="published" when="2024-03-15">15 March 2024</date>
+      </publicationStmt>
+      <sourceDesc>
+        <biblStruct>
+          <analytic>
+            <author>
+              <persName><forename type="first">Jane</forename><surname>Doe</surname></persName>
+            </author>
+            <author>
+              <persName><forename type="first">Carlos</forename><surname>Ng</surname></persName>
+            </author>
+            <idno type="DOI">10.1234/abcd.2024</idno>
+          </analytic>
+          <monogr>
+            <title level="j">Journal of Commodity Forecasting</title>
+          </monogr>
+        </biblStruct>
+      </sourceDesc>
+    </fileDesc>
+    <profileDesc>
+      <abstract>
+        <p>We forecast LME copper prices using an LSTM with attention and beat ARIMA baselines on daily data.</p>
+      </abstract>
+    </profileDesc>
+  </teiHeader>
+  <text xml:lang="en">
+    <body>
+      <div>
+        <head>Introduction</head>
+        <p>Commodity price forecasting is hard. Prior work used ARIMA and VAR models.</p>
+        <p>We propose a deep learning approach.</p>
+      </div>
+      <div>
+        <head>Methodology</head>
+        <p>We train an LSTM with an attention mechanism on daily LME copper prices from 2000 to 2023.</p>
+      </div>
+      <div>
+        <head>Results</head>
+        <p>Our model achieves an RMSE of 0.12, outperforming the ARIMA baseline at 0.21.</p>
+      </div>
+    </body>
+    <back>
+      <div type="references">
+        <listBibl>
+          <biblStruct>
+            <analytic>
+              <title level="a">A VAR approach to metal prices</title>
+              <author><persName><surname>Smith</surname></persName></author>
+              <idno type="DOI">10.5555/var.2019</idno>
+            </analytic>
+            <monogr><imprint><date when="2019"/></imprint></monogr>
+          </biblStruct>
+          <biblStruct>
+            <analytic>
+              <title level="a">Attention is all you need for time series</title>
+              <idno type="arXiv">arXiv:2007.12345</idno>
+            </analytic>
+            <monogr><imprint><date when="2020"/></imprint></monogr>
+          </biblStruct>
+        </listBibl>
+      </div>
+    </back>
+  </text>
+</TEI>
