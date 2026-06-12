@@ -1,0 +1,1 @@
+"""Weekly delta digest generation."""

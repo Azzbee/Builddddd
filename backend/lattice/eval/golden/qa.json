@@ -1,0 +1,12 @@
+[
+  {
+    "question": "Which method beat ARIMA on copper price forecasting and on what metric?",
+    "gold_answer": "An LSTM with attention beat ARIMA on RMSE for daily LME copper prices.",
+    "relevant_paper_ids": ["golden-001"]
+  },
+  {
+    "question": "What did regularization do for vector autoregression on commodity panels?",
+    "gold_answer": "Regularized VAR (lasso/ridge) reduced forecast error versus plain VAR on high-dimensional commodity panels.",
+    "relevant_paper_ids": ["golden-002"]
+  }
+]

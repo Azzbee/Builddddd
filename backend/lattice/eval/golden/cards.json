@@ -1,0 +1,18 @@
+[
+  {
+    "paper_id": "golden-001",
+    "problem": ["Forecasting daily LME copper prices is hard because of nonstationarity and regime shifts."],
+    "methods": ["lstm", "attention", "arima"],
+    "datasets": ["lme copper"],
+    "results": ["LSTM with attention beats ARIMA on RMSE", "improvement is largest at short horizons"],
+    "limitations": ["evaluated on a single commodity", "no transaction costs modeled"]
+  },
+  {
+    "paper_id": "golden-002",
+    "problem": ["Vector autoregression underperforms on high-dimensional commodity panels."],
+    "methods": ["var", "lasso", "ridge"],
+    "datasets": ["comex", "world bank pink sheet"],
+    "results": ["regularized VAR reduces forecast error versus plain VAR"],
+    "limitations": ["assumes linear dynamics"]
+  }
+]
