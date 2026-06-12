@@ -23,6 +23,10 @@ class ChunkEmbedder:
     def dim(self) -> int:
         return self._backend.dim
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """TextEmbedder protocol: embed arbitrary texts (e.g. a search query)."""
+        return self.embed_texts(texts)
+
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
         for start in range(0, len(texts), self._batch):

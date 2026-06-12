@@ -27,7 +27,12 @@ from lattice.embeddings.specter2 import Specter2Embedder
 from lattice.extraction.extractor import extract_paper_card
 from lattice.extraction.schemas import Author, PaperCard
 from lattice.graph.entity_resolution import EntityResolver
-from lattice.graph.evolution import CitationSignal, compute_related_edges, diff_audit
+from lattice.graph.evolution import (
+    CitationSignal,
+    EdgeUpdate,
+    compute_related_edges,
+    diff_audit,
+)
 from lattice.graph.similarity import CosineCalibrator, PaperFeatures, cosine
 from lattice.graph.store import FakeGraphStore, GraphStore
 from lattice.graph.writer import GraphWriter
@@ -43,6 +48,48 @@ from lattice.ingestion.pdf_utils import classify_pdf
 from lattice.ingestion.pipeline import IngestionPipeline, PipelineContext
 
 log = get_logger("ingestion.service")
+
+
+@dataclass
+class GraphEdge:
+    source: str
+    target: str
+    weight: float
+    components: dict[str, float]
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "source": self.source,
+            "target": self.target,
+            "weight": self.weight,
+            "components": self.components,
+        }
+
+
+@dataclass
+class GraphNode:
+    id: str
+    title: str
+    year: int | None
+    community: int
+    centrality: float
+    needs_review: bool
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "year": self.year,
+            "community": self.community,
+            "centrality": self.centrality,
+            "needs_review": self.needs_review,
+        }
+
+
+@dataclass
+class GraphSnapshot:
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
 
 
 class Parser(Protocol):
@@ -81,6 +128,8 @@ class IngestionService:
     # Per-paper feature state for O(k) incremental linking (hydrated from DB in prod).
     _features: dict[str, PaperFeatures] = field(default_factory=dict)
     _external_ids: dict[str, set[str]] = field(default_factory=dict)
+    #: In-memory edge mirror so the explorer works without Neo4j (demo/dev mode).
+    _related: dict[str, list[EdgeUpdate]] = field(default_factory=dict)
     method_resolver: EntityResolver | None = None
     dataset_resolver: EntityResolver | None = None
     #: Text extractor for PDF sanity checks (defaults to pypdf via classify_pdf).
@@ -286,7 +335,71 @@ class IngestionService:
             )
 
         await self.cards.put_card(card)
+        self._related[pid] = edges
         ctx.extra["edges_written"] = len(edges)
+
+    # ------------------------------------------------------------------ explorer
+    async def graph_snapshot(self) -> GraphSnapshot:
+        """Nodes + edges for the explorer, with quick community + centrality.
+
+        Uses union-find communities and weighted-degree centrality so the demo
+        graph is meaningful without a Neo4j GDS run. Production reads precomputed
+        PageRank/Louvain from the graph store.
+        """
+        cards = {c.paper_id: c for c in await self.cards.all_cards()}
+        # Deduplicate undirected edges (max weight).
+        undirected: dict[tuple[str, str], GraphEdge] = {}
+        for src, edges in self._related.items():
+            for e in edges:
+                if e.target_id not in cards:
+                    continue
+                a, b = sorted((src, e.target_id))
+                key = (a, b)
+                prev = undirected.get(key)
+                if prev is None or e.weight > prev.weight:
+                    undirected[key] = GraphEdge(
+                        source=a, target=b, weight=round(e.weight, 4),
+                        components={k: round(v, 4) for k, v in e.result.components.items()},
+                    )
+
+        # Union-find communities.
+        parent: dict[str, str] = {pid: pid for pid in cards}
+
+        def find(x: str) -> str:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for edge in undirected.values():
+            ra, rb = find(edge.source), find(edge.target)
+            if ra != rb:
+                parent[ra] = rb
+
+        labels: dict[str, int] = {}
+        community_ids: dict[str, int] = {}
+        for pid in cards:
+            root = find(pid)
+            community_ids[pid] = labels.setdefault(root, len(labels))
+
+        degree: dict[str, float] = dict.fromkeys(cards, 0.0)
+        for edge in undirected.values():
+            degree[edge.source] += edge.weight
+            degree[edge.target] += edge.weight
+        max_deg = max(degree.values(), default=1.0) or 1.0
+
+        nodes = [
+            GraphNode(
+                id=pid,
+                title=card.title,
+                year=card.year,
+                community=community_ids[pid],
+                centrality=round(degree[pid] / max_deg, 4),
+                needs_review=card.needs_review,
+            )
+            for pid, card in cards.items()
+        ]
+        return GraphSnapshot(nodes=nodes, edges=list(undirected.values()))
 
     # ------------------------------------------------------------------ helpers
     def _ann_candidates(self, pid: str, new_feat: PaperFeatures) -> list[PaperFeatures]:
