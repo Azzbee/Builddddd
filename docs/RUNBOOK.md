@@ -1,0 +1,100 @@
+# Runbook
+
+Operational guide for running, deploying, and maintaining Lattice.
+
+## Local development
+
+```bash
+cp .env.example .env            # fill in ANTHROPIC_API_KEY etc.
+cd backend
+uv sync --extra dev             # core + dev deps
+uv run pytest                   # offline test suite (no services needed)
+uv run ruff check . && uv run mypy lattice
+```
+
+The pure-logic core runs with no external services. To run the API locally
+against in-memory backends (no Neo4j/Postgres required for a demo):
+
+```bash
+make api-dev                    # http://localhost:8000/docs
+```
+
+## Full stack
+
+```bash
+make up                         # neo4j, postgres, redis, grobid, api, worker, web
+make db-schema                  # apply Postgres schema (also auto-applied on init)
+make seed                       # ingest ~20 arXiv forecasting papers
+make ingest FILE=paper.pdf      # ingest a local PDF
+make down
+```
+
+Endpoints: API `:8000`, Web `:3000`, Neo4j browser `:7474`, GROBID `:8070`.
+
+## Configuration
+
+All knobs are in `backend/lattice/config.py`, overridable via `LATTICE_*` env
+vars (nested with `__`, e.g. `LATTICE_SIMILARITY__ALPHA=0.45`). See `.env.example`.
+
+Key knobs:
+- `LATTICE_SIMILARITY__{ALPHA,BETA,GAMMA,DELTA,TAU}` - edge weights and threshold.
+- `LATTICE_COST__{PER_JOB_USD_CAP,DAILY_USD_CAP}` - spend caps (jobs pause at cap).
+- `LATTICE_EXTRACTION__{PRIMARY_MODEL,ESCALATION_MODEL}` - extraction models.
+- `LATTICE_AUTH_TOKEN` - single-user bearer token (auth is off if unset).
+
+## Operations
+
+### Health
+- `GET /health`, `GET /readyz` - liveness/readiness.
+- Worker logs `worker.started`; ingestion logs `ingest.stage_complete` per stage.
+
+### Reprocessing / backfill
+Prompts are versioned and hashed; each card records `extraction_version`. To
+re-extract after a prompt change, bump `LATTICE_EXTRACTION__PROMPT_VERSION` and
+re-run ingestion for affected papers (dedup makes parsing a no-op; extraction
+re-runs). Edge weights are versioned via `computed_by_version`.
+
+### Tuning edge weights
+1. Edit `LATTICE_SIMILARITY__*`.
+2. `make eval` (edge-quality correlation + precision@k).
+3. Keep the configuration that wins; the change is recorded in `edge_audit`.
+
+### Cost control
+Per-job and daily caps live in config. When a cap is hit, the job moves to
+`PAUSED` (not `FAILED`) and can be resumed once the daily window rolls over or the
+cap is raised. Per-query cost is logged and returned in the agent result.
+
+## Failure modes (chaos-tested)
+
+| Symptom | Cause | State / action |
+| --- | --- | --- |
+| `corrupted_pdf` | not a PDF / truncated | job FAILED; re-upload a valid file |
+| `scanned_pdf` | no text layer | job FAILED; needs OCR/vision path |
+| `paywalled_stub` | downloaded a landing page | job FAILED; obtain the real PDF |
+| `duplicate` | already in corpus | job DUPLICATE (no-op, idempotent) |
+| `parser_timeout` | GROBID slow | retryable; worker retries with backoff |
+| `cost_cap_exceeded` | spend cap hit | job PAUSED; resume after reset |
+| `rate_limited` | S2/OpenAlex throttling | cached + backoff; degrades to text-only similarity |
+
+## Deployment (Hetzner VPS + Cloudflare Tunnel)
+
+1. Provision a VPS, install Docker + Compose.
+2. Clone the repo, set `.env` (real API keys, strong `LATTICE_AUTH_TOKEN`,
+   strong `LATTICE_NEO4J__PASSWORD`).
+3. `make up`.
+4. Expose `:8000` (API) and `:3000` (web) via a Cloudflare Tunnel; do not open
+   Neo4j/Postgres/Redis to the internet.
+
+### Backups (nightly)
+```bash
+# Neo4j
+docker compose exec neo4j neo4j-admin database dump neo4j --to-stdout > neo4j-$(date +%F).dump
+# Postgres
+docker compose exec -T postgres pg_dump -U lattice lattice | gzip > pg-$(date +%F).sql.gz
+```
+Ship both to a Hetzner Storage Box. Restore by loading the dump and `psql < gunzip`.
+
+## Observability
+- Structured JSON logs (structlog) to stdout; ship to your log stack.
+- Prometheus metrics and Langfuse LLM tracing are wired via optional extras
+  (`observability`); enable by setting the corresponding env vars.
