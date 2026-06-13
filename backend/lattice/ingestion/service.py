@@ -139,6 +139,8 @@ class IngestionService:
     _related: dict[str, list[EdgeUpdate]] = field(default_factory=dict)
     #: In-memory claim-relation mirror (contradictions/convergence) for the API.
     _claim_relations: list[ClaimEdge] = field(default_factory=list)
+    #: Per-paper aspect embeddings (problem/methodology/results) for quadrants.
+    _aspects: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     method_resolver: EntityResolver | None = None
     dataset_resolver: EntityResolver | None = None
     #: Text extractor for PDF sanity checks (defaults to pypdf via classify_pdf).
@@ -286,6 +288,7 @@ class IngestionService:
             ingested_at=datetime.now(UTC),
         )
         self._external_ids[pid] = _self_external_ids(card)
+        self._aspects[pid] = aspects
 
     async def _link(self, ctx: PipelineContext) -> None:
         assert ctx.card is not None and ctx.job.paper_id is not None
@@ -397,6 +400,143 @@ class IngestionService:
 
     def claim_relations(self) -> list[ClaimEdge]:
         return self._claim_relations
+
+    # ------------------------------------------------------------------ quadrants
+    def _adjacency(self) -> dict[str, set[str]]:
+        adj: dict[str, set[str]] = {}
+        for src, edges in self._related.items():
+            for e in edges:
+                adj.setdefault(src, set()).add(e.target_id)
+                adj.setdefault(e.target_id, set()).add(src)
+        return adj
+
+    def _distance(self, adj: dict[str, set[str]], a: str, b: str, cap: int = 6) -> int:
+        if a == b:
+            return 0
+        seen = {a}
+        frontier = [a]
+        for d in range(1, cap + 1):
+            nxt: list[str] = []
+            for node in frontier:
+                for nb in adj.get(node, set()):
+                    if nb == b:
+                        return d
+                    if nb not in seen:
+                        seen.add(nb)
+                        nxt.append(nb)
+            if not nxt:
+                break
+            frontier = nxt
+        return cap + 1  # effectively disconnected / far
+
+    async def epistemic_quadrants(self) -> dict[str, object]:
+        """Compute the four epistemic quadrants from the corpus.
+
+        Known knowns (independently supported, non-contradicted claims), known
+        unknowns (clustered open problems), and unknown knowns (cross-community
+        transfer candidates). Unknown unknowns are surfaced as proxies elsewhere
+        (high-pressure empty matrix cells).
+        """
+        from lattice.graph.contradictions import ClaimRelation
+        from lattice.landscape.quadrants import (
+            OpenProblemMention,
+            SupportingPaper,
+            cluster_open_problems,
+            consolidate_known_knowns,
+            cross_community_transfer,
+        )
+
+        cards = await self.cards.all_cards()
+        now_year = datetime.now(UTC).year
+
+        # Known knowns: group identical claims across papers.
+        from lattice.core.hashing import normalize_text
+
+        grouped: dict[str, list[SupportingPaper]] = {}
+        canonical: dict[str, str] = {}
+        for card in cards:
+            authors = frozenset(a.normalized_name for a in card.authors)
+            method = card.methods_taxonomy[0] if card.methods_taxonomy else None
+            dataset = card.datasets[0].name if card.datasets else None
+            for r in card.key_results:
+                key = normalize_text(r.claim)
+                if not key:
+                    continue
+                canonical.setdefault(key, r.claim)
+                grouped.setdefault(key, []).append(
+                    SupportingPaper(card.paper_id, authors, method, dataset, card.year)
+                )
+        contradicted = {
+            normalize_text(e.source_text)
+            for e in self._claim_relations
+            if e.relation == ClaimRelation.CONTRADICTS
+        } | {
+            normalize_text(e.target_text)
+            for e in self._claim_relations
+            if e.relation == ClaimRelation.CONTRADICTS
+        }
+        findings = consolidate_known_knowns(grouped, contradicted)
+        known_knowns = [
+            {
+                "claim": canonical.get(normalize_text(f.claim), f.claim),
+                "independent_supports": f.independent_supports,
+                "triangulated": f.triangulated,
+                "latest_year": f.latest_year,
+                "strength": round(f.strength, 3),
+            }
+            for f in findings
+        ]
+
+        # Known unknowns: cluster open problems from future_work.
+        mentions: list[OpenProblemMention] = []
+        fw_texts = [(c.paper_id, fw, c.year) for c in cards for fw in c.future_work if fw.strip()]
+        if fw_texts:
+            vecs = self.chunk_embedder.embed_texts([t for _p, t, _y in fw_texts])
+            for (pid, text, year), vec in zip(fw_texts, vecs, strict=True):
+                mentions.append(OpenProblemMention(pid, text, vec, year))
+        clusters = cluster_open_problems(mentions, current_year=now_year)
+        known_unknowns = [
+            {
+                "problem": cl.canonical_text,
+                "frequency": cl.frequency,
+                "latest_year": cl.latest_year,
+                "span_years": cl.span_years,
+                "score": round(cl.score, 3),
+            }
+            for cl in clusters[:20]
+        ]
+
+        # Unknown knowns: cross-community transfer (method next door to a problem).
+        adj = self._adjacency()
+        sources = [
+            (card.methods_taxonomy[0] if card.methods_taxonomy else "method", card.paper_id, self._aspects[card.paper_id]["methodology"])
+            for card in cards
+            if card.paper_id in self._aspects
+        ]
+        targets = [
+            (card.paper_id, self._aspects[card.paper_id]["problem"])
+            for card in cards
+            if card.paper_id in self._aspects
+        ]
+        transfers = cross_community_transfer(
+            sources, targets, distance_fn=lambda a, b: self._distance(adj, a, b)
+        )
+        unknown_knowns = [
+            {
+                "method": t.method,
+                "source_paper": t.source_paper,
+                "target_paper": t.target_paper,
+                "similarity": round(t.similarity, 3),
+                "graph_distance": t.graph_distance,
+            }
+            for t in transfers[:20]
+        ]
+
+        return {
+            "known_knowns": known_knowns,
+            "known_unknowns": known_unknowns,
+            "unknown_knowns": unknown_knowns,
+        }
 
     # ------------------------------------------------------------------ explorer
     async def graph_snapshot(self) -> GraphSnapshot:

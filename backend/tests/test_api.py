@@ -153,6 +153,23 @@ def test_query_non_stream(client: TestClient) -> None:
     assert "answer" in r.json()
 
 
+def test_landscape_quadrants(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
+    r = client.get("/landscape/quadrants")
+    assert r.status_code == 200
+    body = r.json()
+    assert "known_knowns" in body and "known_unknowns" in body and "unknown_knowns" in body
+
+
+def test_landscape_matrix_local_only(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    # use_global=false avoids any network; still returns a valid matrix.
+    r = client.get("/landscape/matrix?row=method&col=dataset&use_global=false")
+    assert r.status_code == 200
+    assert r.json()["global_signal"] is False
+
+
 def test_contradictions_analyze(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
