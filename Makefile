@@ -58,5 +58,9 @@ check: lint typecheck test ## Run lint + typecheck + tests
 api-dev: ## Run the API locally with reload
 	cd backend && uv run uvicorn lattice.api.app:app --reload
 
+demo: ## Run the API in offline demo mode (populated graph, no external services)
+	cd backend && LATTICE_DEMO_MODE=true uv run uvicorn lattice.api.app:app --reload
+	@echo "Open the web app (make web-dev) against this API to explore the demo graph."
+
 web-dev: ## Run the Next.js dev server
 	cd web && npm run dev

@@ -8,6 +8,7 @@ Tests override the container via :func:`set_container`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from fastapi import Header, HTTPException, status
@@ -19,7 +20,7 @@ from lattice.db.vector import InMemoryVectorStore
 from lattice.embeddings.chunks import ChunkEmbedder
 from lattice.graph.store import FakeGraphStore, GraphStore
 from lattice.ingestion.grobid_client import GrobidClient
-from lattice.ingestion.service import IngestionService
+from lattice.ingestion.service import IngestionService, Parser
 from lattice.rag.agent import RagAgent
 from lattice.rag.tools import Toolbox
 
@@ -53,13 +54,24 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
     settings = settings or get_settings()
     if workspace_id is not None and workspace_id != settings.workspace_id:
         settings = settings.model_copy(update={"workspace_id": workspace_id})
-    llm: LLMClient = LiteLLMClient()
     vectors = InMemoryVectorStore(hybrid_vector_weight=settings.rag.hybrid_vector_weight)
     cards = InMemoryCardStore()
     jobs = InMemoryJobStore()
     graph: GraphStore = FakeGraphStore()
     chunk_embedder = ChunkEmbedder(dim=settings.embedding.chunk_dim)
-    parser = GrobidClient(settings.grobid)
+
+    llm: LLMClient
+    parser: Parser
+    text_extractor: Callable[[bytes], str] | None = None
+    if settings.demo_mode:
+        from lattice.demo import DemoLLM, DemoParser
+
+        llm = DemoLLM()
+        parser = DemoParser()
+        text_extractor = lambda data: "Synthetic demo text. " * 60  # noqa: E731
+    else:
+        llm = LiteLLMClient()
+        parser = GrobidClient(settings.grobid)
     ingestion = IngestionService(
         settings=settings,
         llm=llm,
@@ -68,6 +80,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         cards=cards,
         graph=graph,
         chunk_embedder=chunk_embedder,
+        text_extractor=text_extractor,
     )
     return Container(
         settings=settings,

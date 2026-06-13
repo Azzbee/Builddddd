@@ -144,6 +144,7 @@ class Settings(BaseSettings):
     )
 
     environment: Literal["dev", "test", "prod"] = "dev"
+    demo_mode: bool = False  # offline demo corpus + deterministic models at startup
     workspace_id: str = "default"  # multi-tenant ready: every row carries this
     log_level: str = "INFO"
     log_json: bool = True

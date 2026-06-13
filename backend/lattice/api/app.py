@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,10 +33,20 @@ def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
 
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if settings.demo_mode:
+            from lattice.api.deps import get_container
+            from lattice.demo import load_demo
+
+            await load_demo(get_container(settings.workspace_id))
+        yield
+
     app = FastAPI(
         title="Lattice",
         version=__version__,
         description="A living knowledge graph for scientific literature.",
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,
