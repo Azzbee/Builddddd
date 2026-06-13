@@ -170,6 +170,19 @@ def test_landscape_matrix_local_only(client: TestClient) -> None:
     assert r.json()["global_signal"] is False
 
 
+def test_related_work_and_exports(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
+    rw = client.get("/related-work").json()
+    assert "markdown" in rw and "# Related work" in rw["markdown"]
+    bib = client.get("/export/bibtex")
+    assert bib.status_code == 200 and "@" in bib.text
+    obs = client.get("/export/obsidian")
+    assert obs.status_code == 200
+    assert obs.headers["content-type"] == "application/zip"
+    assert len(obs.content) > 0
+
+
 def test_reading_queue(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})

@@ -538,6 +538,45 @@ class IngestionService:
             "unknown_knowns": unknown_knowns,
         }
 
+    # ------------------------------------------------------------------ related work / export
+    async def _cards_by_community(self) -> dict[str, list[PaperCard]]:
+        snapshot = await self.graph_snapshot()
+        community_of = {n.id: str(n.community) for n in snapshot.nodes}
+        groups: dict[str, list[PaperCard]] = {}
+        for card in await self.cards.all_cards():
+            groups.setdefault(community_of.get(card.paper_id, "0"), []).append(card)
+        return groups
+
+    async def related_work(self) -> dict[str, object]:
+        from lattice.rag.related_work import build_related_work
+
+        draft = build_related_work(await self._cards_by_community())
+        return {
+            "clusters": [cl.to_json() for cl in draft.clusters],
+            "markdown": draft.markdown(),
+            "bibtex": draft.bibtex(),
+        }
+
+    async def export_bibtex(self) -> str:
+        from lattice.rag.related_work import corpus_to_bibtex
+
+        return corpus_to_bibtex(await self.cards.all_cards())
+
+    async def export_obsidian(self) -> dict[str, str]:
+        from lattice.export.obsidian import card_to_note
+
+        snapshot = await self.graph_snapshot()
+        neighbors: dict[str, list[tuple[str, float]]] = {}
+        titles = {n.id: n.title for n in snapshot.nodes}
+        for e in snapshot.edges:
+            neighbors.setdefault(e.source, []).append((e.target, e.weight))
+            neighbors.setdefault(e.target, []).append((e.source, e.weight))
+        notes: dict[str, str] = {}
+        for card in await self.cards.all_cards():
+            nbrs = [(titles.get(t, t), w) for t, w in neighbors.get(card.paper_id, [])]
+            notes[card.title] = card_to_note(card, nbrs)
+        return notes
+
     # ------------------------------------------------------------------ reading queue
     async def reading_queue(self, read_ids: set[str] | None = None) -> list[dict[str, object]]:
         """Rank unread papers by expected information gain given the graph.
