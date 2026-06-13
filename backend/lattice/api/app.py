@@ -6,7 +6,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from lattice import __version__
-from lattice.api import digest, graph, health, ingest, landscape, papers, query, watch
+from lattice.api import (
+    contradictions,
+    digest,
+    graph,
+    health,
+    ingest,
+    landscape,
+    papers,
+    query,
+    watch,
+)
 from lattice.config import get_settings
 from lattice.core.logging import configure_logging
 
@@ -33,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(graph.router)
     app.include_router(query.router)
     app.include_router(landscape.router)
+    app.include_router(contradictions.router)
     app.include_router(watch.router)
     app.include_router(digest.router)
     return app

@@ -153,6 +153,19 @@ def test_query_non_stream(client: TestClient) -> None:
     assert "answer" in r.json()
 
 
+def test_contradictions_analyze(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
+    r = client.post("/contradictions/analyze")
+    assert r.status_code == 200
+    body = r.json()
+    assert "analyzed" in body and "supports" in body
+    # Both papers claim "beats ARIMA" on the same concept -> a SUPPORTS relation.
+    assert body["supports"] >= 1
+    listed = client.get("/contradictions?relation=SUPPORTS").json()
+    assert len(listed) >= 1
+
+
 def test_auth_enforced_when_token_set(monkeypatch: pytest.MonkeyPatch) -> None:
     from lattice.config import get_settings
 

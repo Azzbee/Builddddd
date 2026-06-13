@@ -147,6 +147,26 @@ class GraphWriter:
             {"ws": self._ws, "src": source_id, "dst": target_id, "context": context, "intent": intent},
         )
 
+    async def upsert_claim_relation(
+        self, source_id: str, target_id: str, relation: str, confidence: float
+    ) -> None:
+        """MERGE a SUPPORTS / CONTRADICTS / EXTENDS edge between two claims.
+
+        The relation type is whitelisted to a known set to keep it injection-safe.
+        """
+        allowed = {"SUPPORTS", "CONTRADICTS", "EXTENDS"}
+        if relation not in allowed:
+            raise ValueError(f"invalid claim relation: {relation}")
+        await self._store.execute(
+            f"""
+            MATCH (a:Claim {{workspace_id: $ws, id: $src}})
+            MATCH (b:Claim {{workspace_id: $ws, id: $dst}})
+            MERGE (a)-[r:{relation}]->(b)
+            SET r.confidence = $confidence, r.computed_at = $now
+            """,
+            {"ws": self._ws, "src": source_id, "dst": target_id, "confidence": confidence, "now": _now()},
+        )
+
     async def set_superseded(self, superseded_id: str, superseding_id: str) -> None:
         await self._store.execute(
             """

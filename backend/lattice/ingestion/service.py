@@ -26,6 +26,13 @@ from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
 from lattice.embeddings.specter2 import Specter2Embedder
 from lattice.extraction.extractor import extract_paper_card
 from lattice.extraction.schemas import Author, PaperCard
+from lattice.graph.contradictions import (
+    ClaimEdge,
+    ClaimRecord,
+    HeuristicNLIJudge,
+    NLIJudge,
+    detect_relations,
+)
 from lattice.graph.entity_resolution import EntityResolver
 from lattice.graph.evolution import (
     CitationSignal,
@@ -130,6 +137,8 @@ class IngestionService:
     _external_ids: dict[str, set[str]] = field(default_factory=dict)
     #: In-memory edge mirror so the explorer works without Neo4j (demo/dev mode).
     _related: dict[str, list[EdgeUpdate]] = field(default_factory=dict)
+    #: In-memory claim-relation mirror (contradictions/convergence) for the API.
+    _claim_relations: list[ClaimEdge] = field(default_factory=list)
     method_resolver: EntityResolver | None = None
     dataset_resolver: EntityResolver | None = None
     #: Text extractor for PDF sanity checks (defaults to pypdf via classify_pdf).
@@ -337,6 +346,57 @@ class IngestionService:
         await self.cards.put_card(card)
         self._related[pid] = edges
         ctx.extra["edges_written"] = len(edges)
+
+    # ------------------------------------------------------------------ contradictions
+    async def analyze_relations(self, judge: NLIJudge | None = None) -> list[ClaimEdge]:
+        """Detect SUPPORTS/CONTRADICTS/EXTENDS relations across the corpus' claims.
+
+        Groups every card's key results into ClaimRecords keyed by concept, runs the
+        judge over same-concept cross-paper pairs, persists the resulting edges to
+        the graph, and mirrors them in memory for the API. Defaults to the offline
+        heuristic judge; pass an LLM judge in production.
+        """
+        judge = judge or HeuristicNLIJudge()
+        ws = self.settings.workspace_id
+        claims: list[ClaimRecord] = []
+        for card in await self.cards.all_cards():
+            authors = frozenset(a.normalized_name for a in card.authors)
+            concepts = card.domains or ["general"]
+            for result in card.key_results:
+                for concept in concepts:
+                    claims.append(
+                        ClaimRecord(
+                            claim_id=stable_id(ws, card.paper_id, result.claim),
+                            paper_id=card.paper_id,
+                            text=result.claim,
+                            concept=concept,
+                            authors=authors,
+                            year=card.year,
+                            evidence_location=result.evidence_location,
+                        )
+                    )
+        report = await detect_relations(claims, judge)
+        # Persist to the graph and mirror in memory (dedupe by id pair + relation).
+        seen: set[tuple[str, str, str]] = set()
+        for edge in report.edges:
+            key = (edge.source_id, edge.target_id, str(edge.relation))
+            if key in seen:
+                continue
+            seen.add(key)
+            await self._writer.upsert_claim_relation(
+                edge.source_id, edge.target_id, str(edge.relation), edge.confidence
+            )
+        self._claim_relations = report.edges
+        log.info(
+            "contradictions.analyzed",
+            claims=len(claims),
+            contradictions=len(report.contradictions),
+            supports=len(report.supports),
+        )
+        return report.edges
+
+    def claim_relations(self) -> list[ClaimEdge]:
+        return self._claim_relations
 
     # ------------------------------------------------------------------ explorer
     async def graph_snapshot(self) -> GraphSnapshot:
