@@ -19,6 +19,19 @@ against in-memory backends (no Neo4j/Postgres required for a demo):
 make api-dev                    # http://localhost:8000/docs
 ```
 
+## Offline demo
+
+The fastest way to see Lattice working, with no external services or API keys:
+
+```bash
+make demo        # API in demo mode at :8000 (synthetic populated corpus)
+make web-dev     # web app at :3000, pointed at the demo API
+```
+
+Demo mode (`LATTICE_DEMO_MODE=true`) wires deterministic models and loads a small,
+deliberately interconnected corpus at startup, so the graph, contradictions,
+quadrants, momentum, lineage, and reading queue are all populated immediately.
+
 ## Full stack
 
 ```bash

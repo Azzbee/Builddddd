@@ -85,6 +85,15 @@ lattice/
 
 ## Quick start
 
+See it working in 30 seconds, no API keys or databases required:
+
+```bash
+make demo      # API in offline demo mode with a populated graph
+make web-dev   # open http://localhost:3000
+```
+
+Or run the full stack:
+
 ```bash
 cp .env.example .env        # fill in API keys
 make up                     # bring up the full stack
