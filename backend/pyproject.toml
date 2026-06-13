@@ -55,6 +55,9 @@ observability = [
     "prometheus-client>=0.20",
     "langfuse>=2.40",
 ]
+mcp = [
+    "mcp>=1.2",
+]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
@@ -94,6 +97,12 @@ plugins = ["pydantic.mypy"]
 # Heavy optional integrations are import-guarded; don't fail when extras absent.
 ignore_missing_imports = true
 exclude = ["tests/"]
+
+# FastMCP decorators are untyped (the optional `mcp` package ships no stubs); the
+# server-wiring function is import-guarded and excluded from coverage.
+[[tool.mypy.overrides]]
+module = "lattice.mcp_server"
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
