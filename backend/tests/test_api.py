@@ -191,6 +191,14 @@ def test_related_work_and_exports(client: TestClient) -> None:
     assert len(obs.content) > 0
 
 
+def test_digest_generate_and_latest(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    gen = client.post("/digest/generate").json()
+    assert "markdown" in gen and "# Lattice digest" in gen["markdown"]
+    latest = client.get("/digest/latest").json()
+    assert latest["digest"] is not None
+
+
 def test_lineage(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     r = client.get("/lineage?method=lstm")

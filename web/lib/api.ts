@@ -60,6 +60,7 @@ export const api = {
   readingQueue: () => get<{ read_count: number; queue: Record<string, unknown>[] }>("/reading-queue"),
   relatedWork: () =>
     get<{ clusters: Record<string, unknown>[]; markdown: string; bibtex: string }>("/related-work"),
+  generateDigest: () => post<{ markdown: string }>("/digest/generate", {}),
   jobs: () => get<IngestJob[]>("/ingest/jobs"),
   ingestArxiv: (arxiv_id: string) => post<IngestJob>("/ingest/arxiv", { arxiv_id }),
   async ingestFile(file: File): Promise<IngestJob> {

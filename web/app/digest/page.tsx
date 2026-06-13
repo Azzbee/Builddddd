@@ -13,6 +13,7 @@ interface Mover {
 
 export default function DigestPage() {
   const [movers, setMovers] = useState<Mover[]>([]);
+  const [digest, setDigest] = useState<string>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -22,15 +23,34 @@ export default function DigestPage() {
       .catch((e) => setError(String(e)));
   }, []);
 
+  async function generate() {
+    try {
+      setDigest((await api.generateDigest()).markdown);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold text-white">Digest: movers</h1>
-        <p className="text-sm text-muted">
-          Concept momentum from the corpus. Momentum measures research activity, not
-          truth: pair it with the contested and saturated states before believing a trend.
-        </p>
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-white">Digest: movers</h1>
+          <p className="text-sm text-muted">
+            Concept momentum from the corpus. Momentum measures research activity, not
+            truth: pair it with the contested and saturated states before believing a trend.
+          </p>
+        </div>
+        <button className="btn-accent" onClick={generate}>
+          Generate digest
+        </button>
       </header>
+
+      {digest && (
+        <section className="card">
+          <pre className="whitespace-pre-wrap font-sans text-sm text-ink">{digest}</pre>
+        </section>
+      )}
 
       {error && <div className="card border-bad text-bad">Backend unreachable: {error}</div>}
 

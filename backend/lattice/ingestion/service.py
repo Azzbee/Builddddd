@@ -580,6 +580,51 @@ class IngestionService:
             notes[card.title] = card_to_note(card, nbrs)
         return notes
 
+    # ------------------------------------------------------------------ digest
+    async def generate_digest(self, period_label: str | None = None) -> dict[str, object]:
+        """Build a delta digest from the current corpus (new papers, edges, movers,
+        contradictions). Returns the report JSON + rendered Markdown."""
+        from lattice.digest.weekly import (
+            Contradiction,
+            DigestInput,
+            NewPaper,
+            build_digest,
+            render_markdown,
+        )
+        from lattice.graph.contradictions import ClaimRelation
+        from lattice.landscape.momentum import momentum_score
+
+        cards = await self.cards.all_cards()
+        snapshot = await self.graph_snapshot()
+        label = period_label or datetime.now(UTC).strftime("%Y-W%V")
+
+        counts: dict[str, dict[int, int]] = {}
+        for card in cards:
+            if card.year is None:
+                continue
+            for concept in card.domains:
+                counts.setdefault(concept.lower(), {})
+                counts[concept.lower()][card.year] = counts[concept.lower()].get(card.year, 0) + 1
+        movers = [momentum_score(concept, ys) for concept, ys in counts.items()]
+
+        contradictions = [
+            Contradiction(e.source_text, e.source_paper, e.target_text, e.target_paper)
+            for e in self._claim_relations
+            if e.relation == ClaimRelation.CONTRADICTS
+        ]
+
+        report = build_digest(
+            DigestInput(
+                period_label=label,
+                new_papers=[NewPaper(c.paper_id, c.title, c.year) for c in cards],
+                new_edges=len(snapshot.edges),
+                contradictions=contradictions,
+                movers=movers,
+            )
+        )
+        payload: dict[str, object] = {"report": report.to_json(), "markdown": render_markdown(report)}
+        return payload
+
     # ------------------------------------------------------------------ lineage
     async def lineage(self, method: str) -> dict[str, object]:
         from lattice.graph.lineage import LineageNode, build_lineage

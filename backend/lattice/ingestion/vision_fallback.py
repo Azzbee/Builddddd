@@ -25,6 +25,42 @@ class VisionModel(Protocol):
     async def describe_image(self, image_png: bytes, prompt: str) -> str: ...
 
 
+class LiteLLMVisionModel:  # pragma: no cover - requires a vision model + keys
+    """Concrete vision model via LiteLLM (any vision-capable provider).
+
+    Sends a base64 PNG as an image content block alongside the prompt. Kept thin
+    and provider-agnostic; swap the model id in config.
+    """
+
+    def __init__(self, model: str = "claude-sonnet-4-6", timeout: float = 120.0) -> None:
+        self._model = model
+        self._timeout = timeout
+
+    async def describe_image(self, image_png: bytes, prompt: str) -> str:
+        import base64
+
+        import litellm
+
+        b64 = base64.b64encode(image_png).decode("ascii")
+        resp = await litellm.acompletion(
+            model=self._model,
+            timeout=self._timeout,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
+        )
+        return str(resp.choices[0].message.content or "").strip()
+
+
 async def arbitrate_region(
     model: VisionModel,
     page_image_png: bytes,
