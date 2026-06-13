@@ -30,19 +30,27 @@ Each milestone is independently shippable with its own tests and eval criteria.
   thresholds. (`test_rag`, `eval/retrieval_eval`)
 - **M9**: matrix/quadrants/momentum computed and exposed. (`test_landscape`)
 
-## Extras (PRD section 10) - implemented foundations
+## Extras (PRD section 10) - implemented
 
-- Contradiction detection: `find_contradictions` tool + `CONTRADICTS` edges +
-  quadrant exclusion of contradicted findings.
-- Landscape Intelligence (the centerpiece): gap matrix, epistemic quadrants,
-  momentum (`landscape/`).
-- MCP-ready tools: the RAG `Toolbox` is the same surface an MCP server would
-  expose.
+| Extra | State | Where |
+| --- | --- | --- |
+| 1. Contradiction & convergence detection (NLI) | Done | `graph/contradictions.py`, `/contradictions` |
+| 2. Landscape Intelligence (matrix, quadrants, momentum) | Done | `landscape/`, `/landscape/*` |
+| 3. Lineage view (temporal DAG of a method family) | Done | `graph/lineage.py`, `/lineage` |
+| 4. Related-work generator + BibTeX export | Done | `rag/related_work.py`, `/related-work`, `/export/bibtex` |
+| 5. Obsidian/Markdown export with wiki-links | Done | `export/obsidian.py`, `/export/obsidian` |
+| 6. Reading-queue ranking (expected information gain) | Done | `landscape/reading_queue.py`, `/reading-queue` |
+| 7. Multi-corpus workspaces | Done | `api/deps.py` (X-Workspace-Id), `/workspaces` |
+| 8. MCP server (graph as tools) | Done | `mcp_server.py` |
+
+Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
+-spot distinction (`landscape/signals.py`); a concrete vision-fallback model
+(`ingestion/vision_fallback.py`); Prometheus metrics + request timing
+(`core/metrics.py`, `/metrics`); and the weekly digest generation loop
+(`/digest/generate`).
 
 ## Future work
 
-- Lineage view (temporal DAG of a method family).
-- Related-work generator with BibTeX export.
-- Obsidian/Markdown export of paper cards with wiki-links.
-- Reading-queue ranking by expected information gain.
 - Optional Phase-2 domain-adapted embedding fine-tune (ship only if eval wins).
+- Unknown-unknowns proxies surfaced in the UI (question-coverage probing).
+- Live-service integration runs (Neo4j/Postgres/GROBID/Redis) under `make up`.

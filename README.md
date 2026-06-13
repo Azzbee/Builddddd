@@ -101,11 +101,32 @@ uv run pytest               # offline test suite
 uv run ruff check . && uv run mypy lattice
 ```
 
+## Beyond the core: shipped extras
+
+All eight PRD "extras" are built, not just stubbed:
+
+1. **Contradiction & convergence detection** - claim-level NLI surfaces where the
+   corpus disagrees, as first-class `CONTRADICTS`/`SUPPORTS`/`EXTENDS` edges.
+2. **Landscape Intelligence** - gap matrix (Empty vs Blind-spot via OpenAlex global
+   counts), epistemic quadrants, and momentum scorecards.
+3. **Lineage view** - the temporal DAG of a method family.
+4. **Related-work generator** - grounded, hedged draft grouped by community, with
+   BibTeX export.
+5. **Obsidian export** - one wiki-linked Markdown note per paper, mirroring the graph.
+6. **Reading-queue ranking** - unread papers by expected information gain.
+7. **Multi-corpus workspaces** - isolated corpora via an `X-Workspace-Id` header.
+8. **MCP server** - the graph as read-only tools for Claude Desktop/Code.
+
+Plus Prometheus metrics (`/metrics`), a concrete vision fallback, and the weekly
+digest loop. See [`docs/API.md`](docs/API.md) for the full endpoint reference.
+
 ## Status
 
-Built milestone by milestone (M0 skeleton through M9 landscape intelligence).
-Each milestone is independently shippable with its own tests and eval criteria;
-see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the milestone-by-milestone state.
+Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plus
+the extras above. Each milestone is independently shippable with its own tests and
+eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state. The backend
+test suite (200+ tests) runs fully offline; `mypy --strict` and `ruff` are clean;
+the web app builds clean.
 
 ## License
 

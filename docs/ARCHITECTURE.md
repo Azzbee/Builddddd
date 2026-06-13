@@ -73,13 +73,16 @@ graph.
 | `extraction` | PaperCard schema, versioned prompts, validate-and-repair extractor |
 | `enrichment` | cached/back-off S2/OpenAlex/Crossref/arXiv clients |
 | `embeddings` | SPECTER2, chunk + aspect embedders, hashing fallback |
-| `graph` | schema/constraints, similarity (core IP), evolution, entity resolution, writer, analytics, store |
-| `rag` | router, typed tools, ReAct agent (SSE), cited synthesis |
-| `landscape` | gap matrix, epistemic quadrants, momentum |
+| `graph` | schema/constraints, similarity (core IP), evolution, entity resolution, writer, analytics, store, contradictions (NLI), lineage |
+| `rag` | router, typed tools, ReAct agent (SSE), cited synthesis, related-work generator |
+| `landscape` | gap matrix, epistemic quadrants, momentum, global/demand signals, reading queue |
+| `export` | Obsidian/Markdown notes (BibTeX lives in `rag.related_work`) |
 | `digest` | weekly delta report |
 | `eval` | extraction / retrieval / edge-quality harnesses + golden set |
 | `db` | vector store (in-memory + pgvector), card/job stores, SQL schema |
-| `api` | FastAPI routers + DI container |
+| `api` | FastAPI routers + DI container (workspace-scoped) |
+| `mcp_server` | read-only graph tools over MCP for Claude Desktop/Code |
+| `core.metrics` | dependency-free Prometheus registry (`/metrics`) |
 
 ## Storage
 
