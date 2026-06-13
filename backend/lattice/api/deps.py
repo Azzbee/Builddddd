@@ -49,8 +49,10 @@ class Container:
         return RagAgent(self.llm, toolbox, self.settings.rag)
 
 
-def build_container(settings: Settings | None = None) -> Container:
+def build_container(settings: Settings | None = None, workspace_id: str | None = None) -> Container:
     settings = settings or get_settings()
+    if workspace_id is not None and workspace_id != settings.workspace_id:
+        settings = settings.model_copy(update={"workspace_id": workspace_id})
     llm: LLMClient = LiteLLMClient()
     vectors = InMemoryVectorStore(hybrid_vector_weight=settings.rag.hybrid_vector_weight)
     cards = InMemoryCardStore()
@@ -79,20 +81,37 @@ def build_container(settings: Settings | None = None) -> Container:
     )
 
 
-_container: Container | None = None
+# A test override (takes precedence over the registry) plus a per-workspace
+# registry so each corpus gets fully isolated in-memory stores (extra #7).
+_override: Container | None = None
+_registry: dict[str, Container] = {}
 
 
-def get_container() -> Container:
-    global _container
-    if _container is None:
-        _container = build_container()
-    return _container
+def get_container(x_workspace_id: str | None = Header(default=None)) -> Container:
+    """FastAPI dependency: resolve the container for the request's workspace.
+
+    A test override wins if set. Otherwise containers are created and cached per
+    ``X-Workspace-Id`` header (defaulting to the configured workspace), giving each
+    corpus isolated storage and graph state.
+    """
+    if _override is not None:
+        return _override
+    # Guard against non-FastAPI callers receiving the Header() sentinel.
+    header = x_workspace_id if isinstance(x_workspace_id, str) else None
+    ws = header or get_settings().workspace_id
+    if ws not in _registry:
+        _registry[ws] = build_container(workspace_id=ws)
+    return _registry[ws]
 
 
 def set_container(container: Container | None) -> None:
-    """Override the container (used by tests)."""
-    global _container
-    _container = container
+    """Override the container for every workspace (used by tests)."""
+    global _override
+    _override = container
+
+
+def list_workspaces() -> list[str]:
+    return sorted(_registry)
 
 
 async def require_auth(authorization: str | None = Header(default=None)) -> None:
