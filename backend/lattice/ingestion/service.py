@@ -538,6 +538,47 @@ class IngestionService:
             "unknown_knowns": unknown_knowns,
         }
 
+    # ------------------------------------------------------------------ reading queue
+    async def reading_queue(self, read_ids: set[str] | None = None) -> list[dict[str, object]]:
+        """Rank unread papers by expected information gain given the graph.
+
+        ``read_ids`` are papers already read; the rest are ranked. When empty, all
+        papers are candidates and corpus methods are drawn from the whole corpus.
+        """
+        from lattice.landscape.reading_queue import ReadingCandidate, rank_reading_queue
+
+        read_ids = read_ids or set()
+        snapshot = await self.graph_snapshot()
+        centrality = {n.id: n.centrality for n in snapshot.nodes}
+        neighbors: dict[str, list[tuple[float, float]]] = {}
+        for e in snapshot.edges:
+            # Count an edge toward a paper only if its other end is already read.
+            if e.target in read_ids:
+                neighbors.setdefault(e.source, []).append((e.weight, centrality.get(e.target, 0.0)))
+            if e.source in read_ids:
+                neighbors.setdefault(e.target, []).append((e.weight, centrality.get(e.source, 0.0)))
+            if not read_ids:
+                neighbors.setdefault(e.source, []).append((e.weight, centrality.get(e.target, 0.0)))
+                neighbors.setdefault(e.target, []).append((e.weight, centrality.get(e.source, 0.0)))
+
+        cards = await self.cards.all_cards()
+        corpus_methods: set[str] = set()
+        for card in cards:
+            if not read_ids or card.paper_id in read_ids:
+                corpus_methods |= card.normalized_methods
+
+        candidates = [
+            ReadingCandidate(
+                paper_id=card.paper_id,
+                title=card.title,
+                methods=card.normalized_methods,
+                neighbors=neighbors.get(card.paper_id, []),
+            )
+            for card in cards
+            if card.paper_id not in read_ids
+        ]
+        return [s.to_json() for s in rank_reading_queue(candidates, corpus_methods)]
+
     # ------------------------------------------------------------------ explorer
     async def graph_snapshot(self) -> GraphSnapshot:
         """Nodes + edges for the explorer, with quick community + centrality.

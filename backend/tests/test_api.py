@@ -170,6 +170,15 @@ def test_landscape_matrix_local_only(client: TestClient) -> None:
     assert r.json()["global_signal"] is False
 
 
+def test_reading_queue(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
+    r = client.get("/reading-queue")
+    assert r.status_code == 200
+    body = r.json()
+    assert "queue" in body and isinstance(body["queue"], list)
+
+
 def test_contradictions_analyze(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})

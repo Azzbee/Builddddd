@@ -15,6 +15,7 @@ from lattice.api import (
     landscape,
     papers,
     query,
+    reading,
     watch,
 )
 from lattice.config import get_settings
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(query.router)
     app.include_router(landscape.router)
     app.include_router(contradictions.router)
+    app.include_router(reading.router)
     app.include_router(watch.router)
     app.include_router(digest.router)
     return app
