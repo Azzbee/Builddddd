@@ -183,6 +183,14 @@ def test_related_work_and_exports(client: TestClient) -> None:
     assert len(obs.content) > 0
 
 
+def test_lineage(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    r = client.get("/lineage?method=lstm")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["method"] == "lstm" and "nodes" in body and "timeline" in body
+
+
 def test_reading_queue(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})

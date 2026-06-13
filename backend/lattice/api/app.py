@@ -14,6 +14,7 @@ from lattice.api import (
     health,
     ingest,
     landscape,
+    lineage,
     papers,
     query,
     reading,
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(landscape.router)
     app.include_router(contradictions.router)
     app.include_router(reading.router)
+    app.include_router(lineage.router)
     app.include_router(export.router)
     app.include_router(watch.router)
     app.include_router(digest.router)

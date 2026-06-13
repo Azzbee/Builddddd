@@ -141,6 +141,8 @@ class IngestionService:
     _claim_relations: list[ClaimEdge] = field(default_factory=list)
     #: Per-paper aspect embeddings (problem/methodology/results) for quadrants.
     _aspects: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    #: In-memory directed citation edges (src cites dst) for lineage.
+    _cites: list[tuple[str, str]] = field(default_factory=list)
     method_resolver: EntityResolver | None = None
     dataset_resolver: EntityResolver | None = None
     #: Text extractor for PDF sanity checks (defaults to pypdf via classify_pdf).
@@ -331,6 +333,7 @@ class IngestionService:
         for sig_pid, sig in citations.items():
             if sig.direct_citation:
                 await self._writer.upsert_cites(pid, sig_pid)
+                self._cites.append((pid, sig_pid))
         if audit:
             await self._writer.write_audit(
                 [
@@ -576,6 +579,21 @@ class IngestionService:
             nbrs = [(titles.get(t, t), w) for t, w in neighbors.get(card.paper_id, [])]
             notes[card.title] = card_to_note(card, nbrs)
         return notes
+
+    # ------------------------------------------------------------------ lineage
+    async def lineage(self, method: str) -> dict[str, object]:
+        from lattice.graph.lineage import LineageNode, build_lineage
+
+        nodes = [
+            LineageNode(
+                paper_id=card.paper_id,
+                title=card.title,
+                year=card.year,
+                methods=card.normalized_methods,
+            )
+            for card in await self.cards.all_cards()
+        ]
+        return build_lineage(nodes, list(self._cites), method).to_json()
 
     # ------------------------------------------------------------------ reading queue
     async def reading_queue(self, read_ids: set[str] | None = None) -> list[dict[str, object]]:
