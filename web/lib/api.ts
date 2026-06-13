@@ -37,6 +37,29 @@ export const api = {
       `/landscape/matrix?row=${row}&col=${col}`,
     ),
   momentum: () => get<{ movers: Record<string, unknown>[] }>("/landscape/momentum"),
+  quadrants: () =>
+    get<{
+      known_knowns: Record<string, unknown>[];
+      known_unknowns: Record<string, unknown>[];
+      unknown_knowns: Record<string, unknown>[];
+    }>("/landscape/quadrants"),
+  analyzeContradictions: () =>
+    post<{ analyzed: number; contradictions: number; supports: number }>(
+      "/contradictions/analyze",
+      {},
+    ),
+  contradictions: (relation = "CONTRADICTS") =>
+    get<Record<string, unknown>[]>(`/contradictions?relation=${relation}`),
+  lineage: (method: string) =>
+    get<{
+      method: string;
+      nodes: { id: string; title: string; year: number | null }[];
+      edges: { source: string; target: string; kind: string }[];
+      timeline: Record<string, string[]>;
+    }>(`/lineage?method=${encodeURIComponent(method)}`),
+  readingQueue: () => get<{ read_count: number; queue: Record<string, unknown>[] }>("/reading-queue"),
+  relatedWork: () =>
+    get<{ clusters: Record<string, unknown>[]; markdown: string; bibtex: string }>("/related-work"),
   jobs: () => get<IngestJob[]>("/ingest/jobs"),
   ingestArxiv: (arxiv_id: string) => post<IngestJob>("/ingest/arxiv", { arxiv_id }),
   async ingestFile(file: File): Promise<IngestJob> {
