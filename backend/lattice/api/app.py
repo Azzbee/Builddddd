@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+import time
+
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from lattice import __version__
@@ -22,6 +24,7 @@ from lattice.api import (
 )
 from lattice.config import get_settings
 from lattice.core.logging import configure_logging
+from lattice.core.metrics import REGISTRY
 
 
 def create_app() -> FastAPI:
@@ -39,6 +42,28 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def _metrics_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed = time.perf_counter() - start
+        # Use the route template (not the raw path) to bound label cardinality.
+        route = request.scope.get("route")
+        path = getattr(route, "path", request.url.path)
+        labels = {"method": request.method, "path": path, "status": str(response.status_code)}
+        REGISTRY.inc("lattice_http_requests_total", labels, help="HTTP requests")
+        REGISTRY.observe(
+            "lattice_http_request_duration_seconds",
+            elapsed,
+            {"method": request.method, "path": path},
+            help="HTTP request latency",
+        )
+        return response
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        return Response(content=REGISTRY.render(), media_type="text/plain; version=0.0.4")
 
     app.include_router(health.router)
     app.include_router(ingest.router)

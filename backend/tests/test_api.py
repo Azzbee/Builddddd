@@ -102,6 +102,14 @@ def test_health(client: TestClient) -> None:
     assert r.json()["status"] == "ok"
 
 
+def test_metrics_endpoint_records_requests(client: TestClient) -> None:
+    client.get("/health")
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert "lattice_http_requests_total" in r.text
+    assert "lattice_http_request_duration_seconds_bucket" in r.text
+
+
 def test_ingest_and_read_paper(client: TestClient) -> None:
     r = client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     assert r.status_code == 200, r.text
