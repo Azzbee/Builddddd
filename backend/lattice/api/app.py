@@ -27,6 +27,7 @@ from lattice.api import (
 from lattice.config import get_settings
 from lattice.core.logging import configure_logging
 from lattice.core.metrics import REGISTRY
+from lattice.core.ratelimit import SlidingWindowLimiter
 
 
 def create_app() -> FastAPI:
@@ -54,6 +55,27 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    limiter = SlidingWindowLimiter(settings.rate_limit_per_min, window_s=60.0)
+    _EXEMPT = {"/health", "/healthz", "/readyz", "/metrics"}
+
+    @app.middleware("http")
+    async def _rate_limit_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if request.url.path in _EXEMPT:
+            return await call_next(request)
+        # Key by auth token when present, else client host (best-effort behind a proxy).
+        auth = request.headers.get("authorization")
+        key = auth or (request.client.host if request.client else "anonymous")
+        allowed, retry_after = limiter.allow(key)
+        if not allowed:
+            REGISTRY.inc("lattice_http_rate_limited_total", help="Rate-limited requests")
+            return Response(
+                content='{"detail":"rate limit exceeded"}',
+                status_code=429,
+                media_type="application/json",
+                headers={"Retry-After": str(int(retry_after) + 1)},
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def _metrics_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]

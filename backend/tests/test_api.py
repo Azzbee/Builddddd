@@ -102,6 +102,22 @@ def test_health(client: TestClient) -> None:
     assert r.json()["status"] == "ok"
 
 
+def test_rate_limiting_returns_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lattice.config import get_settings
+
+    monkeypatch.setenv("LATTICE_RATE_LIMIT_PER_MIN", "3")
+    get_settings.cache_clear()
+    try:
+        c = TestClient(create_app())
+        # /metrics is exempt; /papers is not.
+        codes = [c.get("/papers").status_code for _ in range(6)]
+        assert 429 in codes
+        assert codes.count(200) <= 3
+        assert c.get("/health").status_code == 200  # exempt path always allowed
+    finally:
+        get_settings.cache_clear()
+
+
 def test_metrics_endpoint_records_requests(client: TestClient) -> None:
     client.get("/health")
     r = client.get("/metrics")

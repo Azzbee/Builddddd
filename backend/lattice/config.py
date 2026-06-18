@@ -150,6 +150,7 @@ class Settings(BaseSettings):
     log_json: bool = True
     data_dir: str = "/data"
     auth_token: str | None = None  # single-user bearer token
+    rate_limit_per_min: int = 240  # per-client request cap; 0 disables
 
     similarity: SimilarityWeights = Field(default_factory=SimilarityWeights)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
