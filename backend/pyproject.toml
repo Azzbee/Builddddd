@@ -23,6 +23,9 @@ dependencies = [
     "python-dateutil>=2.9",
 ]
 
+[project.scripts]
+lattice = "lattice.cli:main"
+
 [project.optional-dependencies]
 api = [
     "fastapi>=0.111",
