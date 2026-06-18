@@ -13,9 +13,11 @@ import pytest
 
 sqlglot = pytest.importorskip("sqlglot")
 
+from lattice.db.pg_stores import PG_STORE_SQL  # noqa: E402
 from lattice.db.vector import PGVECTOR_SQL  # noqa: E402
 
 SCHEMA = Path(__file__).parent.parent / "lattice" / "db" / "schema.sql"
+ALL_SQL = {**PGVECTOR_SQL, **PG_STORE_SQL}
 
 
 def test_schema_sql_parses() -> None:
@@ -27,15 +29,15 @@ def test_schema_sql_parses() -> None:
     assert "chunks" in rendered.lower()
 
 
-@pytest.mark.parametrize("name", sorted(PGVECTOR_SQL))
-def test_pgvector_queries_parse(name: str) -> None:
+@pytest.mark.parametrize("name", sorted(ALL_SQL))
+def test_store_queries_parse(name: str) -> None:
     # Each store query must parse as valid Postgres (vector <=> operator included).
-    parsed = sqlglot.parse_one(PGVECTOR_SQL[name], read="postgres")
+    parsed = sqlglot.parse_one(ALL_SQL[name], read="postgres")
     assert parsed is not None
 
 
-def test_pgvector_queries_are_parameterized() -> None:
+def test_store_queries_are_parameterized() -> None:
     # Every query uses bind parameters ($1...), never string interpolation.
-    for sql in PGVECTOR_SQL.values():
+    for sql in ALL_SQL.values():
         assert "$1" in sql
         assert "%s" not in sql  # no printf-style formatting that could enable injection

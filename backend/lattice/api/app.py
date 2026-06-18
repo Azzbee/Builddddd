@@ -36,12 +36,15 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        from lattice.api.deps import get_container, init_persistence, shutdown_persistence
+
+        await init_persistence(settings)
         if settings.demo_mode:
-            from lattice.api.deps import get_container
             from lattice.demo import load_demo
 
             await load_demo(get_container(settings.workspace_id))
         yield
+        await shutdown_persistence()
 
     app = FastAPI(
         title="Lattice",

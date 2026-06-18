@@ -15,8 +15,8 @@ from fastapi import Header, HTTPException, status
 
 from lattice.config import Settings, get_settings
 from lattice.core.llm import LiteLLMClient, LLMClient
-from lattice.db.cards import InMemoryCardStore, InMemoryJobStore
-from lattice.db.vector import InMemoryVectorStore
+from lattice.db.cards import CorpusStore, InMemoryCardStore, InMemoryJobStore, JobStore
+from lattice.db.vector import InMemoryVectorStore, VectorStore
 from lattice.embeddings.chunks import ChunkEmbedder
 from lattice.graph.store import FakeGraphStore, GraphStore
 from lattice.ingestion.grobid_client import GrobidClient
@@ -29,9 +29,9 @@ from lattice.rag.tools import Toolbox
 class Container:
     settings: Settings
     llm: LLMClient
-    vectors: InMemoryVectorStore
-    cards: InMemoryCardStore
-    jobs: InMemoryJobStore
+    vectors: VectorStore
+    cards: CorpusStore
+    jobs: JobStore
     graph: GraphStore
     chunk_embedder: ChunkEmbedder
     ingestion: IngestionService
@@ -50,15 +50,38 @@ class Container:
         return RagAgent(self.llm, toolbox, self.settings.rag)
 
 
+# Shared persistent resources (created once at startup when settings.persistent).
+_persist_pool: object | None = None
+_persist_graph: GraphStore | None = None
+
+
 def build_container(settings: Settings | None = None, workspace_id: str | None = None) -> Container:
     settings = settings or get_settings()
     if workspace_id is not None and workspace_id != settings.workspace_id:
         settings = settings.model_copy(update={"workspace_id": workspace_id})
-    vectors = InMemoryVectorStore(hybrid_vector_weight=settings.rag.hybrid_vector_weight)
-    cards = InMemoryCardStore()
-    jobs = InMemoryJobStore()
-    graph: GraphStore = FakeGraphStore()
+    ws = settings.workspace_id
     chunk_embedder = ChunkEmbedder(dim=settings.embedding.chunk_dim)
+
+    vectors: VectorStore
+    cards: CorpusStore
+    jobs: JobStore
+    graph: GraphStore
+    reader = None
+    if settings.persistent and _persist_pool is not None and _persist_graph is not None:
+        from lattice.db.pg_stores import PgCardStore, PgJobStore
+        from lattice.db.vector import PgVectorStore
+        from lattice.graph.reader import Neo4jGraphReader
+
+        vectors = PgVectorStore(_persist_pool, ws, settings.rag.hybrid_vector_weight)
+        cards = PgCardStore(_persist_pool, ws)
+        jobs = PgJobStore(_persist_pool, ws)
+        graph = _persist_graph
+        reader = Neo4jGraphReader(_persist_graph)
+    else:
+        vectors = InMemoryVectorStore(hybrid_vector_weight=settings.rag.hybrid_vector_weight)
+        cards = InMemoryCardStore()
+        jobs = InMemoryJobStore()
+        graph = FakeGraphStore()
 
     llm: LLMClient
     parser: Parser
@@ -79,6 +102,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         vectors=vectors,
         cards=cards,
         graph=graph,
+        reader=reader,
         chunk_embedder=chunk_embedder,
         text_extractor=text_extractor,
     )
@@ -92,6 +116,42 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         chunk_embedder=chunk_embedder,
         ingestion=ingestion,
     )
+
+
+async def init_persistence(settings: Settings | None = None) -> None:
+    """Create the shared Postgres pool + Neo4j store and apply schemas. Idempotent."""
+    global _persist_pool, _persist_graph
+    settings = settings or get_settings()
+    if not settings.persistent or _persist_pool is not None:
+        return
+    from pathlib import Path
+
+    from lattice.db.vector import create_pg_pool
+    from lattice.graph.schema import apply_schema
+    from lattice.graph.store import Neo4jGraphStore
+
+    pool = await create_pg_pool(
+        settings.postgres.dsn, min_size=settings.postgres.pool_min, max_size=settings.postgres.pool_max
+    )
+    schema_sql = (Path(__file__).parent.parent / "db" / "schema.sql").read_text()
+    async with pool.acquire() as conn:
+        await conn.execute(schema_sql)
+    neo4j = Neo4jGraphStore(settings.neo4j)
+    await apply_schema(neo4j)
+    _persist_pool = pool
+    _persist_graph = neo4j
+
+
+async def shutdown_persistence() -> None:
+    global _persist_pool, _persist_graph
+    pool = _persist_pool
+    if pool is not None and hasattr(pool, "close"):
+        await pool.close()
+    graph = _persist_graph
+    if graph is not None and hasattr(graph, "close"):
+        await graph.close()
+    _persist_pool = None
+    _persist_graph = None
 
 
 # A test override (takes precedence over the registry) plus a per-workspace

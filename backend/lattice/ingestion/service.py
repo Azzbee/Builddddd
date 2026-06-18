@@ -20,8 +20,8 @@ from lattice.core.errors import DuplicateError
 from lattice.core.hashing import content_hash, normalize_arxiv, normalize_doi, stable_id
 from lattice.core.llm import LLMClient
 from lattice.core.logging import get_logger
-from lattice.db.cards import InMemoryCardStore
-from lattice.db.vector import InMemoryVectorStore, VectorRecord
+from lattice.db.cards import CorpusStore
+from lattice.db.vector import VectorRecord, VectorStore
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
 from lattice.embeddings.specter2 import Specter2Embedder
 from lattice.extraction.extractor import extract_paper_card
@@ -40,6 +40,8 @@ from lattice.graph.evolution import (
     compute_related_edges,
     diff_audit,
 )
+from lattice.graph.models import GraphEdge, GraphNode, GraphSnapshot
+from lattice.graph.reader import GraphReader
 from lattice.graph.similarity import CosineCalibrator, PaperFeatures, cosine
 from lattice.graph.store import FakeGraphStore, GraphStore
 from lattice.graph.writer import GraphWriter
@@ -55,48 +57,6 @@ from lattice.ingestion.pdf_utils import classify_pdf
 from lattice.ingestion.pipeline import IngestionPipeline, PipelineContext
 
 log = get_logger("ingestion.service")
-
-
-@dataclass
-class GraphEdge:
-    source: str
-    target: str
-    weight: float
-    components: dict[str, float]
-
-    def to_json(self) -> dict[str, object]:
-        return {
-            "source": self.source,
-            "target": self.target,
-            "weight": self.weight,
-            "components": self.components,
-        }
-
-
-@dataclass
-class GraphNode:
-    id: str
-    title: str
-    year: int | None
-    community: int
-    centrality: float
-    needs_review: bool
-
-    def to_json(self) -> dict[str, object]:
-        return {
-            "id": self.id,
-            "title": self.title,
-            "year": self.year,
-            "community": self.community,
-            "centrality": self.centrality,
-            "needs_review": self.needs_review,
-        }
-
-
-@dataclass
-class GraphSnapshot:
-    nodes: list[GraphNode]
-    edges: list[GraphEdge]
 
 
 class Parser(Protocol):
@@ -124,9 +84,12 @@ class IngestionService:
     settings: Settings
     llm: LLMClient
     parser: Parser
-    vectors: InMemoryVectorStore
-    cards: InMemoryCardStore
+    vectors: VectorStore
+    cards: CorpusStore
     graph: GraphStore = field(default_factory=FakeGraphStore)
+    #: Optional Neo4j-backed reader; when set, read paths query the live graph
+    #: instead of the in-memory mirror (production cross-process correctness).
+    reader: GraphReader | None = None
     enricher: Enricher | None = None
     specter: Specter2Embedder = field(default_factory=lambda: Specter2Embedder(dim=768))
     chunk_embedder: ChunkEmbedder = field(default_factory=lambda: ChunkEmbedder(dim=1024))
@@ -401,8 +364,14 @@ class IngestionService:
         )
         return report.edges
 
-    def claim_relations(self) -> list[ClaimEdge]:
-        return self._claim_relations
+    async def get_claim_relations(self, relation: str | None = None) -> list[ClaimEdge]:
+        """Claim relations from the live graph (reader) or the in-memory mirror."""
+        if self.reader is not None:
+            return await self.reader.claim_relations(self.settings.workspace_id, relation)
+        edges = self._claim_relations
+        if relation:
+            edges = [e for e in edges if str(e.relation) == relation.upper()]
+        return edges
 
     # ------------------------------------------------------------------ quadrants
     def _adjacency(self) -> dict[str, set[str]]:
@@ -440,7 +409,6 @@ class IngestionService:
         transfer candidates). Unknown unknowns are surfaced as proxies elsewhere
         (high-pressure empty matrix cells).
         """
-        from lattice.graph.contradictions import ClaimRelation
         from lattice.landscape.quadrants import (
             OpenProblemMention,
             SupportingPaper,
@@ -469,14 +437,9 @@ class IngestionService:
                 grouped.setdefault(key, []).append(
                     SupportingPaper(card.paper_id, authors, method, dataset, card.year)
                 )
-        contradicted = {
-            normalize_text(e.source_text)
-            for e in self._claim_relations
-            if e.relation == ClaimRelation.CONTRADICTS
-        } | {
-            normalize_text(e.target_text)
-            for e in self._claim_relations
-            if e.relation == ClaimRelation.CONTRADICTS
+        contradictions = await self.get_claim_relations("CONTRADICTS")
+        contradicted = {normalize_text(e.source_text) for e in contradictions} | {
+            normalize_text(e.target_text) for e in contradictions
         }
         findings = consolidate_known_knowns(grouped, contradicted)
         known_knowns = [
@@ -629,6 +592,9 @@ class IngestionService:
     async def lineage(self, method: str) -> dict[str, object]:
         from lattice.graph.lineage import LineageNode, build_lineage
 
+        if self.reader is not None:
+            return (await self.reader.lineage(self.settings.workspace_id, method)).to_json()
+
         nodes = [
             LineageNode(
                 paper_id=card.paper_id,
@@ -687,8 +653,10 @@ class IngestionService:
 
         Uses union-find communities and weighted-degree centrality so the demo
         graph is meaningful without a Neo4j GDS run. Production reads precomputed
-        PageRank/Louvain from the graph store.
+        PageRank/Louvain from the graph store via the injected reader.
         """
+        if self.reader is not None:
+            return await self.reader.snapshot(self.settings.workspace_id)
         cards = {c.paper_id: c for c in await self.cards.all_cards()}
         # Deduplicate undirected edges (max weight).
         undirected: dict[tuple[str, str], GraphEdge] = {}

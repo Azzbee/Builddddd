@@ -23,7 +23,7 @@ async def test_demo_loads_full_corpus_offline() -> None:
     assert len(snapshot.edges) > 0
 
     # Contradiction analysis found the transformer dispute and convergent claims.
-    relations = container.ingestion.claim_relations()
+    relations = await container.ingestion.get_claim_relations()
     kinds = {str(e.relation) for e in relations}
     assert "CONTRADICTS" in kinds
 

@@ -31,8 +31,6 @@ async def analyze(use_llm: bool = False, c: Container = Depends(get_container)) 
 async def list_relations(
     relation: str | None = None, c: Container = Depends(get_container)
 ) -> list[dict[str, object]]:
-    """Return cached claim relations, optionally filtered (e.g. relation=CONTRADICTS)."""
-    edges = c.ingestion.claim_relations()
-    if relation:
-        edges = [e for e in edges if str(e.relation) == relation.upper()]
+    """Return claim relations, optionally filtered (e.g. relation=CONTRADICTS)."""
+    edges = await c.ingestion.get_claim_relations(relation)
     return [e.to_json() for e in edges]

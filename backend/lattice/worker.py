@@ -76,10 +76,13 @@ async def generate_weekly_digest(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 async def startup(ctx: dict[str, Any]) -> None:
+    from lattice.api.deps import init_persistence
+
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
+    await init_persistence(settings)  # share Postgres/Neo4j with the API in prod
     ctx["container"] = build_container(settings)
-    log.info("worker.started")
+    log.info("worker.started", persistent=settings.persistent)
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
