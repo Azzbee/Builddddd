@@ -49,6 +49,49 @@ jobs:
       - name: Run eval harness (offline, deterministic backends)
         run: uv run python ../scripts/run_eval.py --ci
 
+  integration:
+    name: Integration (pgvector + neo4j)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: lattice
+          POSTGRES_PASSWORD: lattice
+          POSTGRES_DB: lattice
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lattice"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      neo4j:
+        image: neo4j:5.23-community
+        env:
+          NEO4J_AUTH: neo4j/lattice-dev-password
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+    env:
+      LATTICE_TEST_PG_DSN: postgresql://lattice:lattice@localhost:5432/lattice
+      LATTICE_TEST_NEO4J_URI: bolt://localhost:7687
+      LATTICE_TEST_NEO4J_USER: neo4j
+      LATTICE_TEST_NEO4J_PASSWORD: lattice-dev-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv venv --python 3.11
+      - run: uv pip install -e ".[dev,db]"
+      - name: Run live integration tests
+        run: uv run pytest -m integration -v
+
   web:
     name: Web (lint, typecheck, build)
     runs-on: ubuntu-latest

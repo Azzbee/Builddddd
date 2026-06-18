@@ -36,8 +36,11 @@ ingest: ## Ingest a local PDF: make ingest FILE=path/to/paper.pdf
 	@test -n "$(FILE)" || (echo "usage: make ingest FILE=paper.pdf" && exit 1)
 	curl -sS -F "file=@$(FILE)" http://localhost:8000/ingest/file | python3 -m json.tool
 
-test: ## Run the backend test suite
+test: ## Run the backend test suite (offline; integration tests skip)
 	cd backend && uv run pytest
+
+test-integration: ## Run live integration tests (needs LATTICE_TEST_PG_DSN / LATTICE_TEST_NEO4J_URI)
+	cd backend && uv run pytest -m integration -v
 
 eval: ## Run extraction + retrieval + edge-quality evals
 	cd backend && uv run python ../scripts/run_eval.py
