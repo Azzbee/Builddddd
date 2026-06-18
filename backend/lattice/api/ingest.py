@@ -25,9 +25,21 @@ async def _run_and_store(c: Container, source_ref: str, pdf: bytes) -> IngestJob
 async def ingest_file(
     file: UploadFile = File(...), c: Container = Depends(get_container)
 ) -> dict[str, object]:
+    # Reject oversized uploads before buffering the whole body (DoS guard).
+    cap = c.settings.max_upload_mb * 1024 * 1024
+    if file.size is not None and file.size > cap:
+        raise HTTPException(
+            413,
+            f"file exceeds {c.settings.max_upload_mb} MB limit",
+        )
     # Stage failures are captured as resumable job state, not HTTP errors, so the
     # caller always gets a job back to inspect/retry.
     data = await file.read()
+    if len(data) > cap:
+        raise HTTPException(
+            413,
+            f"file exceeds {c.settings.max_upload_mb} MB limit",
+        )
     job = await _run_and_store(c, file.filename or "upload.pdf", data)
     return job.model_dump(mode="json")
 

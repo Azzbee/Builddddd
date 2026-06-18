@@ -152,6 +152,7 @@ class Settings(BaseSettings):
     data_dir: str = "/data"
     auth_token: str | None = None  # single-user bearer token
     rate_limit_per_min: int = 240  # per-client request cap; 0 disables
+    max_upload_mb: int = 50  # reject PDF uploads larger than this
 
     similarity: SimilarityWeights = Field(default_factory=SimilarityWeights)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)

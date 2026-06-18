@@ -141,6 +141,22 @@ def test_ingest_and_read_paper(client: TestClient) -> None:
     assert card["key_results"][0]["evidence_location"] == "Results"
 
 
+def test_ingest_rejects_oversized_upload(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lattice.api import deps
+    from lattice.config import get_settings
+
+    monkeypatch.setenv("LATTICE_MAX_UPLOAD_MB", "0")  # reject anything non-empty
+    get_settings.cache_clear()
+    deps._registry.clear()  # drop any cached container so new settings take effect
+    try:
+        c = TestClient(create_app())
+        r = c.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+        assert r.status_code == 413
+    finally:
+        get_settings.cache_clear()
+        deps._registry.clear()
+
+
 def test_ingest_bad_pdf_fails_gracefully(client: TestClient) -> None:
     # Stage failures are captured as job state (resumable), not HTTP errors.
     r = client.post("/ingest/file", files={"file": ("bad.pdf", b"nope", "application/pdf")})
