@@ -88,7 +88,9 @@ jobs:
         with:
           enable-cache: true
       - run: uv venv --python 3.11
-      - run: uv pip install -e ".[dev,db]"
+      # api extra is needed because pytest imports all test modules during
+      # collection (test_api/test_demo import FastAPI) before -m filtering.
+      - run: uv pip install -e ".[dev,db,api]"
       - name: Run live integration tests
         run: uv run pytest -m integration -v
 
