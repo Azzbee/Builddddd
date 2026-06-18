@@ -96,9 +96,18 @@ Or run the full stack:
 
 ```bash
 cp .env.example .env        # fill in API keys
-make up                     # bring up the full stack
+make up                     # bring up the full stack (persistent: Postgres + Neo4j)
 make seed                   # pull 20 arXiv commodity-forecasting papers
 make ingest FILE=paper.pdf  # ingest a local PDF
+```
+
+There is also a CLI (installed as `lattice`):
+
+```bash
+lattice demo                       # run the API in offline demo mode
+lattice ingest paper.pdf           # ingest a local PDF in-process
+lattice query "which methods beat ARIMA, and where do they disagree?"
+lattice eval --ci                  # run the offline eval harness
 ```
 
 Develop and test the backend without any services:

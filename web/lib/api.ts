@@ -6,12 +6,17 @@ import type {
   PaperCard,
   PaperSummary,
 } from "./types";
+import { getWorkspace } from "./workspace";
 
 // All requests go through the Next.js /api proxy (see next.config.mjs).
 const BASE = "/api";
 
+function headers(extra: Record<string, string> = {}): Record<string, string> {
+  return { "X-Workspace-Id": getWorkspace(), ...extra };
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
+  const res = await fetch(`${BASE}${path}`, { cache: "no-store", headers: headers() });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -19,7 +24,7 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: headers({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
@@ -69,7 +74,7 @@ export const api = {
   async ingestFile(file: File): Promise<IngestJob> {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${BASE}/ingest/file`, { method: "POST", body: form });
+    const res = await fetch(`${BASE}/ingest/file`, { method: "POST", body: form, headers: headers() });
     if (!res.ok) throw new Error(`ingest -> ${res.status}`);
     return res.json() as Promise<IngestJob>;
   },
@@ -84,7 +89,7 @@ export function streamQuery(
   (async () => {
     const res = await fetch(`${BASE}/query/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: headers({ "Content-Type": "application/json" }),
       body: JSON.stringify({ question }),
       signal: controller.signal,
     });
