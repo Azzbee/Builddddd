@@ -15,6 +15,7 @@ const LINKS = [
   { href: "/lineage", label: "Lineage" },
   { href: "/reading", label: "Reading" },
   { href: "/related", label: "Related work" },
+  { href: "/watch", label: "Watch" },
   { href: "/digest", label: "Digest" },
 ];
 

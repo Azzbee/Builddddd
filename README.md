@@ -133,9 +133,16 @@ digest loop. See [`docs/API.md`](docs/API.md) for the full endpoint reference.
 
 Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plus
 the extras above. Each milestone is independently shippable with its own tests and
-eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state. The backend
-test suite (200+ tests) runs fully offline; `mypy --strict` and `ruff` are clean;
-the web app builds clean.
+eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
+
+- Backend: 250+ tests run fully offline; `mypy --strict` and `ruff` clean.
+- The production datastore code is verified **live in CI**: a dedicated job spins up
+  real Postgres+pgvector and Neo4j service containers and runs the integration
+  suite (chunk ANN/hybrid search, idempotent graph writes, bi-temporal edges, claim
+  relations, and the Neo4j read paths) on every push.
+- Web app builds clean (14 routes). Static SQL is parsed/validated with sqlglot.
+- Offline demo mode (`make demo`) loads a populated graph with zero external
+  services.
 
 ## License
 

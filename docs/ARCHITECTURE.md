@@ -92,6 +92,19 @@ graph.
   audit, watch subscriptions/queue, digests. Supabase-compatible (`db/schema.sql`).
 - **Redis**: arq task queue and enrichment cache.
 
+### In-memory vs persistent backends
+
+Every store sits behind a protocol with two implementations: an in-memory one
+(default; powers demo mode, dev, and the offline test suite) and a
+Postgres/Neo4j-backed one. Set `LATTICE_PERSISTENT=true` (docker-compose does this
+for the `api` and `worker`) to wire `PgVectorStore`, `PgCardStore`, `PgJobStore`,
+the `Neo4jGraphStore`, and a `Neo4jGraphReader`. Because the API and worker are
+separate processes, the persistent read paths query the live graph via the reader
+(`graph/reader.py`) rather than any in-process mirror, so reads are cross-process
+correct. The shared pool and driver are created once at startup
+(`deps.init_persistence`). All persistent code is verified live in CI against real
+service containers.
+
 ## Agentic RAG
 
 A query is classified (factual / relational / global / comparative) to steer

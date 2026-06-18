@@ -223,6 +223,20 @@ def test_lineage(client: TestClient) -> None:
     assert body["method"] == "lstm" and "nodes" in body and "timeline" in body
 
 
+def test_watch_queue_and_approve(client: TestClient) -> None:
+    from lattice.api.deps import get_container
+
+    get_container("default")._watch_queue.append(
+        {"arxiv_id": "2406.123", "title": "Cand", "similarity": 0.6, "status": "pending"}
+    )
+    queue = client.get("/watch/queue").json()
+    assert any(item["arxiv_id"] == "2406.123" for item in queue)
+    r = client.post("/watch/approve", json={"arxiv_id": "2406.123", "approve": True})
+    assert r.json()["status"] == "approved"
+    # Approved item leaves the pending queue.
+    assert all(item["arxiv_id"] != "2406.123" for item in client.get("/watch/queue").json())
+
+
 def test_reading_queue(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})

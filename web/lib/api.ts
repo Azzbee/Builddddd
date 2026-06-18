@@ -61,6 +61,9 @@ export const api = {
   relatedWork: () =>
     get<{ clusters: Record<string, unknown>[]; markdown: string; bibtex: string }>("/related-work"),
   generateDigest: () => post<{ markdown: string }>("/digest/generate", {}),
+  watchQueue: () => get<Record<string, unknown>[]>("/watch/queue"),
+  approveWatch: (arxiv_id: string, approve: boolean) =>
+    post<{ arxiv_id: string; status: string }>("/watch/approve", { arxiv_id, approve }),
   jobs: () => get<IngestJob[]>("/ingest/jobs"),
   ingestArxiv: (arxiv_id: string) => post<IngestJob>("/ingest/arxiv", { arxiv_id }),
   async ingestFile(file: File): Promise<IngestJob> {
