@@ -9,12 +9,18 @@ Tests override the container via :func:`set_container`.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from fastapi import Header, HTTPException, status
 
 from lattice.config import Settings, get_settings
 from lattice.core.llm import LiteLLMClient, LLMClient
+from lattice.db.aux_stores import (
+    DigestStore,
+    InMemoryDigestStore,
+    InMemoryWatchStore,
+    WatchStore,
+)
 from lattice.db.cards import CorpusStore, InMemoryCardStore, InMemoryJobStore, JobStore
 from lattice.db.vector import InMemoryVectorStore, VectorStore
 from lattice.embeddings.chunks import ChunkEmbedder
@@ -35,8 +41,8 @@ class Container:
     graph: GraphStore
     chunk_embedder: ChunkEmbedder
     ingestion: IngestionService
-    _watch_queue: list[dict[str, object]] = field(default_factory=list)
-    _digests: list[dict[str, object]] = field(default_factory=list)
+    watch: WatchStore
+    digests: DigestStore
 
     def make_agent(self) -> RagAgent:
         toolbox = Toolbox(
@@ -66,21 +72,32 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
     cards: CorpusStore
     jobs: JobStore
     graph: GraphStore
+    watch: WatchStore
+    digests: DigestStore
     reader = None
     if settings.persistent and _persist_pool is not None and _persist_graph is not None:
-        from lattice.db.pg_stores import PgCardStore, PgJobStore
+        from lattice.db.pg_stores import (
+            PgCardStore,
+            PgDigestStore,
+            PgJobStore,
+            PgWatchStore,
+        )
         from lattice.db.vector import PgVectorStore
         from lattice.graph.reader import Neo4jGraphReader
 
         vectors = PgVectorStore(_persist_pool, ws, settings.rag.hybrid_vector_weight)
         cards = PgCardStore(_persist_pool, ws)
         jobs = PgJobStore(_persist_pool, ws)
+        watch = PgWatchStore(_persist_pool, ws)
+        digests = PgDigestStore(_persist_pool, ws)
         graph = _persist_graph
         reader = Neo4jGraphReader(_persist_graph)
     else:
         vectors = InMemoryVectorStore(hybrid_vector_weight=settings.rag.hybrid_vector_weight)
         cards = InMemoryCardStore()
         jobs = InMemoryJobStore()
+        watch = InMemoryWatchStore()
+        digests = InMemoryDigestStore()
         graph = FakeGraphStore()
 
     llm: LLMClient
@@ -121,6 +138,8 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         graph=graph,
         chunk_embedder=chunk_embedder,
         ingestion=ingestion,
+        watch=watch,
+        digests=digests,
     )
 
 

@@ -53,7 +53,7 @@ async def test_poll_arxiv_queues_similar_candidates(monkeypatch: pytest.MonkeyPa
     ctx = await _demo_ctx()
     added = await worker.poll_arxiv(ctx)
     assert added >= 1
-    queue = ctx["container"]._watch_queue  # type: ignore[attr-defined]
+    queue = await ctx["container"].watch.pending()  # type: ignore[attr-defined]
     arxiv_ids = {item["arxiv_id"] for item in queue}
     assert "2406.99999" in arxiv_ids  # on-topic candidate queued
 
@@ -76,7 +76,7 @@ async def test_generate_weekly_digest_persists() -> None:
     ctx = await _demo_ctx()
     payload = await worker.generate_weekly_digest(ctx)
     assert "markdown" in payload
-    assert ctx["container"]._digests  # type: ignore[attr-defined]
+    assert await ctx["container"].digests.latest() is not None  # type: ignore[attr-defined]
 
 
 async def test_ingest_pdf_task_runs() -> None:

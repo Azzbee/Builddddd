@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lattice.api.deps import build_container
+from lattice.api.deps import Container, build_container
 from lattice.config import get_settings
 from lattice.core.logging import configure_logging, get_logger
 from lattice.enrichment.arxiv_watcher import ArxivWatcher
@@ -18,7 +18,7 @@ log = get_logger("worker")
 
 
 async def ingest_pdf_task(ctx: dict[str, Any], source_ref: str, pdf_bytes: bytes) -> dict[str, Any]:
-    container = ctx["container"]
+    container: Container = ctx["container"]
     job = await container.ingestion.ingest_pdf(source_ref, pdf_bytes)
     await container.jobs.save(job)
     result: dict[str, Any] = job.model_dump(mode="json")
@@ -27,7 +27,7 @@ async def ingest_pdf_task(ctx: dict[str, Any], source_ref: str, pdf_bytes: bytes
 
 async def poll_arxiv(ctx: dict[str, Any]) -> int:
     """Cron: fetch recent arXiv papers, score against the corpus, queue matches."""
-    container = ctx["container"]
+    container: Container = ctx["container"]
     settings = get_settings()
     watcher = ArxivWatcher(settings.enrichment)
     try:
@@ -50,32 +50,16 @@ async def poll_arxiv(ctx: dict[str, Any]) -> int:
         embedder=container.ingestion.specter.text_backend,
         floor=settings.watcher.similarity_floor,
     )
-    existing = {item["arxiv_id"] for item in container._watch_queue}
-    added = 0
-    for s in scored:
-        if s.candidate.arxiv_id in existing:
-            continue
-        container._watch_queue.append({**s.to_json(), "status": "pending"})
-        added += 1
+    added = await container.watch.enqueue([s.to_json() for s in scored])
     log.info("watcher.queued", added=added)
     return added
 
 
 async def generate_weekly_digest(ctx: dict[str, Any]) -> dict[str, Any]:
     """Cron: build and persist the weekly delta digest."""
-    from datetime import UTC, datetime
-
-    from lattice.digest.weekly import DigestInput, build_digest, render_markdown
-
-    container = ctx["container"]
-    cards = await container.cards.all_cards()
-    snapshot = await container.ingestion.graph_snapshot()
-    label = datetime.now(UTC).strftime("%Y-W%V")
-    report = build_digest(
-        DigestInput(period_label=label, new_papers=[], new_edges=len(snapshot.edges))
-    )
-    payload = {"report": report.to_json(), "markdown": render_markdown(report), "papers": len(cards)}
-    container._digests.append(payload)
+    container: Container = ctx["container"]
+    payload = await container.ingestion.generate_digest()
+    await container.digests.add(payload)
     return payload
 
 

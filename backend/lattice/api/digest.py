@@ -11,17 +11,15 @@ router = APIRouter(prefix="/digest", tags=["digest"], dependencies=[Depends(requ
 async def generate(c: Container = Depends(get_container)) -> dict[str, object]:
     """Build and store the current delta digest, then return it."""
     payload = await c.ingestion.generate_digest()
-    c._digests.append(payload)
+    await c.digests.add(payload)
     return payload
 
 
 @router.get("/latest")
 async def latest(c: Container = Depends(get_container)) -> dict[str, object]:
-    if not c._digests:
-        return {"digest": None}
-    return {"digest": c._digests[-1]}
+    return {"digest": await c.digests.latest()}
 
 
 @router.get("/history")
 async def history(c: Container = Depends(get_container)) -> list[dict[str, object]]:
-    return list(reversed(c._digests))
+    return await c.digests.history()

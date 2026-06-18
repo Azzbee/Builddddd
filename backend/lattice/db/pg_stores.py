@@ -49,6 +49,28 @@ ON CONFLICT (job_id) DO UPDATE SET
 SQL_GET_JOB = "SELECT * FROM ingest_jobs WHERE workspace_id = $1 AND job_id = $2"
 SQL_ALL_JOBS = "SELECT * FROM ingest_jobs WHERE workspace_id = $1 ORDER BY created_at DESC"
 
+SQL_ENQUEUE_WATCH = """
+INSERT INTO watch_queue (workspace_id, arxiv_id, title, similarity, nearest_paper_id, status)
+VALUES ($1, $2, $3, $4, $5, 'pending')
+ON CONFLICT (workspace_id, arxiv_id) DO NOTHING
+"""
+SQL_PENDING_WATCH = (
+    "SELECT arxiv_id, title, similarity, nearest_paper_id, status FROM watch_queue "
+    "WHERE workspace_id = $1 AND status = 'pending' ORDER BY similarity DESC"
+)
+SQL_SET_WATCH_STATUS = (
+    "UPDATE watch_queue SET status = $3 WHERE workspace_id = $1 AND arxiv_id = $2"
+)
+SQL_ADD_DIGEST = (
+    "INSERT INTO digests (workspace_id, period_label, report) VALUES ($1, $2, $3)"
+)
+SQL_LATEST_DIGEST = (
+    "SELECT report FROM digests WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 1"
+)
+SQL_DIGEST_HISTORY = (
+    "SELECT report FROM digests WHERE workspace_id = $1 ORDER BY created_at DESC"
+)
+
 #: All statements, for static SQL validation in tests/test_sql.py.
 PG_STORE_SQL = {
     "upsert_paper": SQL_UPSERT_PAPER,
@@ -58,6 +80,12 @@ PG_STORE_SQL = {
     "upsert_job": SQL_UPSERT_JOB,
     "get_job": SQL_GET_JOB,
     "all_jobs": SQL_ALL_JOBS,
+    "enqueue_watch": SQL_ENQUEUE_WATCH,
+    "pending_watch": SQL_PENDING_WATCH,
+    "set_watch_status": SQL_SET_WATCH_STATUS,
+    "add_digest": SQL_ADD_DIGEST,
+    "latest_digest": SQL_LATEST_DIGEST,
+    "digest_history": SQL_DIGEST_HISTORY,
 }
 
 
@@ -135,6 +163,55 @@ class PgJobStore:  # pragma: no cover - exercised by integration tests
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(SQL_ALL_JOBS, self._ws)
         return [_row_to_job(r) for r in rows]
+
+
+class PgWatchStore:  # pragma: no cover - exercised by integration tests
+    def __init__(self, pool: Any, workspace_id: str = "default") -> None:
+        self._pool = pool
+        self._ws = workspace_id
+
+    async def enqueue(self, items: list[dict[str, Any]]) -> int:
+        added = 0
+        async with self._pool.acquire() as conn:
+            for item in items:
+                result = await conn.execute(
+                    SQL_ENQUEUE_WATCH, self._ws, str(item.get("arxiv_id")), item.get("title", ""),
+                    float(item.get("similarity", 0.0)), item.get("nearest_paper_id"),
+                )
+                if result.endswith("1"):  # "INSERT 0 1" when a row was added
+                    added += 1
+        return added
+
+    async def pending(self) -> list[dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(SQL_PENDING_WATCH, self._ws)
+        return [dict(r) for r in rows]
+
+    async def set_status(self, arxiv_id: str, status: str) -> bool:
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(SQL_SET_WATCH_STATUS, self._ws, arxiv_id, status)
+        return bool(result.endswith("1"))
+
+
+class PgDigestStore:  # pragma: no cover - exercised by integration tests
+    def __init__(self, pool: Any, workspace_id: str = "default") -> None:
+        self._pool = pool
+        self._ws = workspace_id
+
+    async def add(self, report: dict[str, Any]) -> None:
+        label = str((report.get("report") or {}).get("period_label", "")) or "digest"
+        async with self._pool.acquire() as conn:
+            await conn.execute(SQL_ADD_DIGEST, self._ws, label, json.dumps(report))
+
+    async def latest(self) -> dict[str, Any] | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchval(SQL_LATEST_DIGEST, self._ws)
+        return _loads(row) if row else None
+
+    async def history(self) -> list[dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(SQL_DIGEST_HISTORY, self._ws)
+        return [_loads(r["report"]) for r in rows]
 
 
 def _row_to_job(row: Any) -> IngestJob:

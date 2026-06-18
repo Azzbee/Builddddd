@@ -8,6 +8,7 @@ from lattice.api.app import create_app
 from lattice.api.deps import Container, set_container
 from lattice.config import Settings
 from lattice.core.llm import LLMMessage, LLMResponse
+from lattice.db.aux_stores import InMemoryDigestStore, InMemoryWatchStore
 from lattice.db.cards import InMemoryCardStore, InMemoryJobStore
 from lattice.db.vector import InMemoryVectorStore
 from lattice.embeddings.chunks import ChunkEmbedder
@@ -86,6 +87,8 @@ def client() -> TestClient:
         graph=ingestion.graph,
         chunk_embedder=ingestion.chunk_embedder,
         ingestion=ingestion,
+        watch=InMemoryWatchStore(),
+        digests=InMemoryDigestStore(),
     )
     set_container(container)
     yield TestClient(create_app())
@@ -242,9 +245,11 @@ def test_lineage(client: TestClient) -> None:
 def test_watch_queue_and_approve(client: TestClient) -> None:
     from lattice.api.deps import get_container
 
-    get_container("default")._watch_queue.append(
-        {"arxiv_id": "2406.123", "title": "Cand", "similarity": 0.6, "status": "pending"}
-    )
+    # The override container uses the in-memory watch store; seed it directly.
+    store = get_container("default").watch
+    store._items["2406.123"] = {  # type: ignore[attr-defined]
+        "arxiv_id": "2406.123", "title": "Cand", "similarity": 0.6, "status": "pending",
+    }
     queue = client.get("/watch/queue").json()
     assert any(item["arxiv_id"] == "2406.123" for item in queue)
     r = client.post("/watch/approve", json={"arxiv_id": "2406.123", "approve": True})

@@ -16,13 +16,13 @@ class ApprovalAction(BaseModel):
 @router.get("/queue")
 async def queue(c: Container = Depends(get_container)) -> list[dict[str, object]]:
     """The approval queue of arXiv candidates similar to the corpus."""
-    return [item for item in c._watch_queue if item.get("status") == "pending"]
+    return await c.watch.pending()
 
 
 @router.post("/approve")
 async def approve(action: ApprovalAction, c: Container = Depends(get_container)) -> dict[str, object]:
-    for item in c._watch_queue:
-        if item.get("arxiv_id") == action.arxiv_id:
-            item["status"] = "approved" if action.approve else "rejected"
-            return {"arxiv_id": action.arxiv_id, "status": item["status"]}
-    return {"error": "not found"}
+    status = "approved" if action.approve else "rejected"
+    ok = await c.watch.set_status(action.arxiv_id, status)
+    if not ok:
+        return {"error": "not found"}
+    return {"arxiv_id": action.arxiv_id, "status": status}

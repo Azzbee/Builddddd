@@ -29,11 +29,15 @@ async def pool():  # type: ignore[no-untyped-def]
         await conn.execute(SCHEMA.read_text())
         await conn.execute("DELETE FROM chunks")
         await conn.execute("DELETE FROM ingest_jobs")
+        await conn.execute("DELETE FROM watch_queue")
+        await conn.execute("DELETE FROM digests")
         await conn.execute("DELETE FROM papers")
     yield pool
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM chunks")
         await conn.execute("DELETE FROM ingest_jobs")
+        await conn.execute("DELETE FROM watch_queue")
+        await conn.execute("DELETE FROM digests")
         await conn.execute("DELETE FROM papers")
     await pool.close()
 
@@ -91,3 +95,37 @@ async def test_job_workspace_isolation(pool) -> None:  # type: ignore[no-untyped
     await a.save(IngestJob(job_id="j1", workspace_id="wsA", source_type=SourceType.FILE, source_ref="a"))
     assert len(await a.all_jobs()) == 1
     assert len(await b.all_jobs()) == 0
+
+
+async def test_watch_store_enqueue_dedup_and_status(pool) -> None:  # type: ignore[no-untyped-def]
+    from lattice.db.pg_stores import PgWatchStore
+
+    store = PgWatchStore(pool, "ws")
+    added = await store.enqueue(
+        [
+            {"arxiv_id": "2406.1", "title": "A", "similarity": 0.8, "nearest_paper_id": "p1"},
+            {"arxiv_id": "2406.2", "title": "B", "similarity": 0.6, "nearest_paper_id": None},
+        ]
+    )
+    assert added == 2
+    # Re-enqueue is idempotent (ON CONFLICT DO NOTHING).
+    assert await store.enqueue([{"arxiv_id": "2406.1", "title": "A", "similarity": 0.8}]) == 0
+    pending = await store.pending()
+    assert {p["arxiv_id"] for p in pending} == {"2406.1", "2406.2"}
+    assert pending[0]["arxiv_id"] == "2406.1"  # ordered by similarity desc
+
+    assert await store.set_status("2406.1", "approved") is True
+    assert {p["arxiv_id"] for p in await store.pending()} == {"2406.2"}
+    assert await store.set_status("missing", "approved") is False
+
+
+async def test_digest_store_add_latest_history(pool) -> None:  # type: ignore[no-untyped-def]
+    from lattice.db.pg_stores import PgDigestStore
+
+    store = PgDigestStore(pool, "ws")
+    assert await store.latest() is None
+    await store.add({"report": {"period_label": "2026-W01"}, "markdown": "# one"})
+    await store.add({"report": {"period_label": "2026-W02"}, "markdown": "# two"})
+    latest = await store.latest()
+    assert latest is not None and latest["markdown"] == "# two"
+    assert len(await store.history()) == 2
