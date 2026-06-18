@@ -176,6 +176,9 @@ async def create_pg_pool(dsn: str, *, min_size: int = 1, max_size: int = 10) -> 
     from pgvector.asyncpg import register_vector
 
     async def _init(conn: Any) -> None:
+        # The vector type must exist before its codec can be registered, so ensure
+        # the extension is present on every fresh connection first.
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await register_vector(conn)
 
     return await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size, init=_init)
