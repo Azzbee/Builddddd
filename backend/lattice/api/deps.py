@@ -85,6 +85,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
 
     llm: LLMClient
     parser: Parser
+    enricher = None
     text_extractor: Callable[[bytes], str] | None = None
     if settings.demo_mode:
         from lattice.demo import DemoLLM, DemoParser
@@ -93,8 +94,12 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         parser = DemoParser()
         text_extractor = lambda data: "Synthetic demo text. " * 60  # noqa: E731
     else:
+        from lattice.enrichment.service import CompositeEnricher
+
         llm = LiteLLMClient()
         parser = GrobidClient(settings.grobid)
+        # Free SPECTER2 vectors + reference graph from S2/OpenAlex (best-effort).
+        enricher = CompositeEnricher(settings.enrichment)
     ingestion = IngestionService(
         settings=settings,
         llm=llm,
@@ -103,6 +108,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         cards=cards,
         graph=graph,
         reader=reader,
+        enricher=enricher,
         chunk_embedder=chunk_embedder,
         text_extractor=text_extractor,
     )
