@@ -16,6 +16,7 @@ export default function GraphPage() {
   const [data, setData] = useState<GraphData>({ nodes: [], edges: [] });
   const [minWeight, setMinWeight] = useState(0.35);
   const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -37,6 +38,12 @@ export default function GraphPage() {
             Size = centrality, color = community, edge thickness = weight.
           </p>
         </div>
+        <input
+          className="input max-w-[200px]"
+          placeholder="Search papers..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         <label className="flex items-center gap-2 text-sm text-muted">
           min weight {minWeight.toFixed(2)}
           <input
@@ -53,7 +60,7 @@ export default function GraphPage() {
       {error && <div className="card border-bad text-bad">Backend unreachable: {error}</div>}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-        <GraphExplorer data={filtered} onSelect={setSelected} />
+        <GraphExplorer data={filtered} onSelect={setSelected} highlight={search} />
         <aside className="card h-fit">
           {selected ? (
             <div className="space-y-2">

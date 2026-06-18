@@ -18,11 +18,14 @@ function colorFor(community: number): string {
 export function GraphExplorer({
   data,
   onSelect,
+  highlight = "",
 }: {
   data: GraphData;
   onSelect: (node: GraphNode | null) => void;
+  highlight?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<Sigma | null>(null);
   const [hoverEdge, setHoverEdge] = useState<GraphEdge | null>(null);
 
   useEffect(() => {
@@ -66,8 +69,27 @@ export function GraphExplorer({
     renderer.on("enterEdge", ({ edge }) => setHoverEdge(graph.getEdgeAttribute(edge, "edge")));
     renderer.on("leaveEdge", () => setHoverEdge(null));
 
-    return () => renderer.kill();
+    rendererRef.current = renderer;
+    return () => {
+      renderer.kill();
+      rendererRef.current = null;
+    };
   }, [data, onSelect]);
+
+  // Highlight nodes matching the search term; dim the rest.
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    const term = highlight.trim().toLowerCase();
+    renderer.setSetting("nodeReducer", (_node, attrs) => {
+      if (!term) return attrs;
+      const match = String(attrs.label || "").toLowerCase().includes(term);
+      return match
+        ? { ...attrs, zIndex: 1, highlighted: true }
+        : { ...attrs, color: "#2a3142", label: "", zIndex: 0 };
+    });
+    renderer.refresh();
+  }, [highlight]);
 
   return (
     <div className="relative h-[70vh] w-full overflow-hidden rounded-lg border border-border bg-panel">

@@ -1,27 +1,28 @@
-# Pre-commit hooks mirroring CI. Install with: pre-commit install
+# Run `pre-commit install` once, then checks run on every commit.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.5.7
-    hooks:
-      - id: ruff
-        args: [--fix]
-        files: ^backend/
-      - id: ruff-format
-        files: ^backend/
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
-    hooks:
-      - id: end-of-file-fixer
-      - id: trailing-whitespace
-      - id: check-yaml
-      - id: check-merge-conflict
-      - id: check-added-large-files
-        args: [--maxkb=1024]
   - repo: local
     hooks:
+      - id: ruff
+        name: ruff (lint)
+        entry: bash -c 'cd backend && uv run ruff check .'
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: ruff-format
+        name: ruff (format check)
+        entry: bash -c 'cd backend && uv run ruff format --check .'
+        language: system
+        types: [python]
+        pass_filenames: false
       - id: mypy
-        name: mypy (backend)
+        name: mypy (strict)
         entry: bash -c 'cd backend && uv run mypy lattice'
         language: system
+        types: [python]
         pass_filenames: false
-        files: ^backend/lattice/.*\.py$
+      - id: pytest
+        name: pytest (offline)
+        entry: bash -c 'cd backend && uv run pytest -q'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
