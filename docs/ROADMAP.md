@@ -49,8 +49,18 @@ Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
 (`core/metrics.py`, `/metrics`); and the weekly digest generation loop
 (`/digest/generate`).
 
+## Production verification
+
+The production datastore code is no longer "written but unrun": a CI job spins up
+real Postgres+pgvector and Neo4j service containers and runs the live integration
+suite on every push (chunk ANN + hybrid search, idempotent graph writes,
+bi-temporal edges, claim relations, the Neo4j read paths, and the Postgres card /
+job / watch / digest stores). Backend coverage is ~92% with an 85% CI floor.
+Persistence is wired by `LATTICE_PERSISTENT` (on by default in docker-compose), and
+a `lattice` CLI provides serve/demo/ingest/query/eval.
+
 ## Future work
 
+- GROBID/LLM end-to-end run in CI (needs a model key); both are thin/fixture-tested.
 - Optional Phase-2 domain-adapted embedding fine-tune (ship only if eval wins).
 - Unknown-unknowns proxies surfaced in the UI (question-coverage probing).
-- Live-service integration runs (Neo4j/Postgres/GROBID/Redis) under `make up`.
