@@ -142,18 +142,25 @@ function PdfReader({ paperId, initialPage }: { paperId: string; initialPage?: nu
 
   if (!meta || !meta.available) return null;
 
+  // A real, parseable PDF reports a page count; synthetic/demo bytes report 0, so
+  // we surface "stored" without an embed that would just render broken.
+  const readable = meta.pages > 0;
+
   return (
     <section className="card">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-white">Source PDF</h2>
         <div className="flex items-center gap-2 text-xs text-muted">
-          <span>{meta.pages > 0 ? `${meta.pages} pages` : "stored"}</span>
-          <button className="btn" onClick={() => setOpen((v) => !v)}>
-            {open ? "Hide" : "Open reader"}
-          </button>
+          <span>{readable ? `${meta.pages} pages` : "stored (no preview)"}</span>
+          {readable && (
+            <button className="btn" onClick={() => setOpen((v) => !v)}>
+              {open ? "Hide" : "Open reader"}
+            </button>
+          )}
         </div>
       </div>
       {open &&
+        readable &&
         (url ? (
           <iframe
             title="source pdf"
@@ -163,7 +170,7 @@ function PdfReader({ paperId, initialPage }: { paperId: string; initialPage?: nu
         ) : (
           <p className="text-sm text-muted">Loading PDF...</p>
         ))}
-      {open && page && (
+      {open && readable && page && (
         <p className="mt-1 text-xs text-muted">
           Jumped to page {page}.{" "}
           <button className="text-accent hover:underline" onClick={() => setPage(undefined)}>
