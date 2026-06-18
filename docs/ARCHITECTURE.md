@@ -113,8 +113,32 @@ retrieval. A ReAct-style agent (provider-agnostic JSON protocol) calls typed too
 `compare_papers`, `run_cypher` [read-only, validated], `find_contradictions`),
 capped at 8 tool calls. Every answer streams over SSE with inline citations
 validated against retrieved provenance (the agent cannot cite what it did not
-see). Low confidence yields an honest "I don't know". Token and cost are tracked
-per query; a tool trace powers the "how I got this" panel.
+see). Citations carry the section *and PDF page*, so the chat UI deep-links
+`[3] · p.8` straight into the embedded reader. Low confidence yields an honest
+"I don't know". Token and cost are tracked per query; a tool trace powers the
+"how I got this" panel.
+
+## Evaluation
+
+Two harnesses share one golden set. The **offline** harness (`lattice eval`,
+`scripts/run_eval.py`) is dependency-free and gates CI: extraction P/R/F1 with
+regression checks, retrieval citation-correctness/faithfulness proxies, and
+edge-quality rank correlation against the PRD thresholds. The **LLM-judge**
+harness (`lattice eval --judge`, `lattice/eval/llm_judge.py`) adds a RAGAS-style
+suite graded by a model through the same `LLMClient`: faithfulness via
+atomic-claim entailment, answer relevance, context precision, and answer
+correctness. It runs the agent over the golden Q/A set, captures the retrieved
+context from the tool trace, and scores each item; abstentions are graded without
+a model call. Because the judge is an injected `LLMClient`, the whole harness is
+unit-tested offline with a scripted model.
+
+## Source PDFs
+
+The raw PDF is persisted at the (final, transactional) linking stage via a
+`BlobStore` (in-memory offline; Postgres `bytea` in production), keyed by
+`paper_id` with a precomputed page count. Section-anchored chunks carry their
+page, which flows chunk -> vector record -> chunk hit -> provenance -> citation,
+giving the reader and chat a precise deep-link target.
 
 ## Non-functional guarantees
 

@@ -28,6 +28,14 @@ def test_eval_runs(capsys: pytest.CaptureFixture[str]) -> None:
     assert "extraction" in out and "retrieval" in out
 
 
+def test_eval_judge_runs_offline_in_demo(_demo_env, capsys: pytest.CaptureFixture[str]) -> None:
+    # The demo agent abstains, so the judged harness scores it without any real
+    # LLM call and still emits the full RAGAS-style report.
+    assert main(["eval", "--judge"]) == 0
+    out = capsys.readouterr().out
+    assert "faithfulness" in out and "answer_correctness" in out
+
+
 def test_ingest_and_query_demo(_demo_env, tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
     pdf = tmp_path / "lstm_copper.pdf"
     pdf.write_bytes(demo_pdf_bytes("lstm_copper.pdf"))

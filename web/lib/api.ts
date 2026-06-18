@@ -5,6 +5,8 @@ import type {
   MatrixCell,
   PaperCard,
   PaperSummary,
+  PdfMeta,
+  SelectionSummary,
 } from "./types";
 import { getWorkspace } from "./workspace";
 
@@ -34,6 +36,19 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   listPapers: () => get<PaperSummary[]>("/papers"),
   getPaper: (id: string) => get<PaperCard>(`/papers/${encodeURIComponent(id)}`),
+  summarizePapers: (paper_ids: string[]) =>
+    post<SelectionSummary>("/papers/summarize", { paper_ids }),
+  pdfMeta: (id: string) => get<PdfMeta>(`/papers/${encodeURIComponent(id)}/pdf/meta`),
+  // Fetch the PDF through the workspace-aware proxy and return an object URL the
+  // embedded viewer can use (an <iframe src> can't carry the X-Workspace-Id header).
+  async pdfObjectUrl(id: string): Promise<string> {
+    const res = await fetch(`${BASE}/papers/${encodeURIComponent(id)}/pdf`, {
+      cache: "no-store",
+      headers: headers(),
+    });
+    if (!res.ok) throw new Error(`pdf -> ${res.status}`);
+    return URL.createObjectURL(await res.blob());
+  },
   graph: (minWeight = 0) => get<GraphData>(`/graph?min_weight=${minWeight}`),
   graphStats: () => get<{ papers: number; edges: number; communities: number }>("/graph/stats"),
   query: (question: string) => post<AgentAnswer>("/query", { question }),

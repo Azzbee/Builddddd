@@ -2,16 +2,23 @@
 
 import { use, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { PaperCard } from "@/lib/types";
+import type { PaperCard, PdfMeta } from "@/lib/types";
 
 export default function PaperPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [card, setCard] = useState<PaperCard | null>(null);
   const [error, setError] = useState<string>();
+  const [initialPage, setInitialPage] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     api.getPaper(id).then(setCard).catch((e) => setError(String(e)));
   }, [id]);
+
+  useEffect(() => {
+    // Deep-link target like ?page=8 (set by chat citations), read client-side.
+    const p = Number(new URLSearchParams(window.location.search).get("page"));
+    if (p > 0) setInitialPage(p);
+  }, []);
 
   if (error) return <div className="card border-bad text-bad">Not found: {error}</div>;
   if (!card) return <div className="text-sm text-muted">Loading...</div>;
@@ -94,7 +101,77 @@ export default function PaperPage({ params }: { params: Promise<{ id: string }> 
       <Section title="Future work">
         <Bullets items={card.future_work} />
       </Section>
+
+      <PdfReader paperId={id} initialPage={initialPage} />
     </article>
+  );
+}
+
+function PdfReader({ paperId, initialPage }: { paperId: string; initialPage?: number }) {
+  const [meta, setMeta] = useState<PdfMeta | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  const [page, setPage] = useState<number | undefined>(initialPage);
+  const [open, setOpen] = useState<boolean>(initialPage != null);
+
+  useEffect(() => {
+    api.pdfMeta(paperId).then(setMeta).catch(() => setMeta(null));
+  }, [paperId]);
+
+  // A deep-link page may resolve after mount; open the reader at it when it does.
+  useEffect(() => {
+    if (initialPage != null) {
+      setPage(initialPage);
+      setOpen(true);
+    }
+  }, [initialPage]);
+
+  useEffect(() => {
+    if (!open || url) return;
+    let revoked: string | null = null;
+    api
+      .pdfObjectUrl(paperId)
+      .then((u) => {
+        revoked = u;
+        setUrl(u);
+      })
+      .catch(() => setUrl(null));
+    return () => {
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [open, url, paperId]);
+
+  if (!meta || !meta.available) return null;
+
+  return (
+    <section className="card">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-white">Source PDF</h2>
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <span>{meta.pages > 0 ? `${meta.pages} pages` : "stored"}</span>
+          <button className="btn" onClick={() => setOpen((v) => !v)}>
+            {open ? "Hide" : "Open reader"}
+          </button>
+        </div>
+      </div>
+      {open &&
+        (url ? (
+          <iframe
+            title="source pdf"
+            src={`${url}${page ? `#page=${page}` : ""}`}
+            className="h-[80vh] w-full rounded-md border border-border bg-white"
+          />
+        ) : (
+          <p className="text-sm text-muted">Loading PDF...</p>
+        ))}
+      {open && page && (
+        <p className="mt-1 text-xs text-muted">
+          Jumped to page {page}.{" "}
+          <button className="text-accent hover:underline" onClick={() => setPage(undefined)}>
+            show from start
+          </button>
+        </p>
+      )}
+    </section>
   );
 }
 

@@ -31,6 +31,8 @@ class Chunk(BaseModel):
     char_start: int  # offset within the section text
     char_end: int
     region_type: RegionType = RegionType.PROSE
+    #: 1-based PDF page the source section starts on, when known (for deep-linking).
+    page: int | None = None
 
     @property
     def approx_tokens(self) -> int:
@@ -111,17 +113,17 @@ def chunk_document(
     max_chars = max_tokens * _CHARS_PER_TOKEN
     overlap_chars = overlap_tokens * _CHARS_PER_TOKEN
 
-    sections: list[tuple[str, str, str, RegionType]] = []
+    sections: list[tuple[str, str, str, RegionType, int | None]] = []
     if doc.abstract:
-        sections.append(("abstract", "Abstract", doc.abstract, RegionType.PROSE))
+        sections.append(("abstract", "Abstract", doc.abstract, RegionType.PROSE, 1))
     for s in doc.sections:
         if s.region_type in (RegionType.TABLE, RegionType.FORMULA, RegionType.FIGURE):
             continue
-        sections.append((s.section_id, s.title, s.text, s.region_type))
+        sections.append((s.section_id, s.title, s.text, s.region_type, s.page))
 
     chunks: list[Chunk] = []
     ordinal = 0
-    for section_id, title, text, region in sections:
+    for section_id, title, text, region, page in sections:
         sentences = _split_sentences(text)
         if not sentences:
             continue
@@ -139,6 +141,7 @@ def chunk_document(
                     char_start=cstart,
                     char_end=cend,
                     region_type=region,
+                    page=page,
                 )
             )
             ordinal += 1

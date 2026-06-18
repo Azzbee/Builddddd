@@ -73,6 +73,8 @@ class GrobidSettings(BaseSettings):
     timeout_s: float = 120.0
     consolidate_citations: int = 1
     consolidate_header: int = 1
+    #: TEI elements to annotate with page coordinates (enables PDF page deep-links).
+    tei_coordinates: str = "head,p,persName,figure,biblStruct,formula"
 
 
 class DoclingSettings(BaseSettings):

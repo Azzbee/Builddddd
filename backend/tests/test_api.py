@@ -9,6 +9,7 @@ from lattice.api.deps import Container, set_container
 from lattice.config import Settings
 from lattice.core.llm import LLMMessage, LLMResponse
 from lattice.db.aux_stores import InMemoryDigestStore, InMemoryWatchStore
+from lattice.db.blobs import InMemoryBlobStore
 from lattice.db.cards import InMemoryCardStore, InMemoryJobStore
 from lattice.db.vector import InMemoryVectorStore
 from lattice.embeddings.chunks import ChunkEmbedder
@@ -67,12 +68,14 @@ def client() -> TestClient:
     llm = ScriptedLLM([_card_json("a"), _card_json("b")] + ['{"answer": "x", "citations": [], "confidence": 0.0}'] * 5)
     vectors = InMemoryVectorStore()
     cards = InMemoryCardStore()
+    blobs = InMemoryBlobStore()
     ingestion = IngestionService(
         settings=settings,
         llm=llm,
         parser=FakeParser(),
         vectors=vectors,
         cards=cards,
+        blobs=blobs,
         graph=FakeGraphStore(),
         specter=Specter2Embedder(dim=64),
         chunk_embedder=ChunkEmbedder(dim=64),
@@ -89,6 +92,7 @@ def client() -> TestClient:
         ingestion=ingestion,
         watch=InMemoryWatchStore(),
         digests=InMemoryDigestStore(),
+        blobs=blobs,
     )
     set_container(container)
     yield TestClient(create_app())
@@ -142,6 +146,35 @@ def test_ingest_and_read_paper(client: TestClient) -> None:
     card = client.get(f"/papers/{pid}").json()
     assert card["title"].startswith("Paper")
     assert card["key_results"][0]["evidence_location"] == "Results"
+
+
+def test_pdf_storage_and_streaming(client: TestClient) -> None:
+    r = client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    pid = r.json()["paper_id"]
+
+    meta = client.get(f"/papers/{pid}/pdf/meta").json()
+    assert meta["available"] is True
+    assert meta["size"] > 0
+
+    pdf = client.get(f"/papers/{pid}/pdf")
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content.startswith(b"%PDF")
+
+    # Unknown paper -> no PDF.
+    assert client.get("/papers/missing/pdf/meta").json()["available"] is False
+    assert client.get("/papers/missing/pdf").status_code == 404
+
+
+def test_summarize_selection(client: TestClient) -> None:
+    a = client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")}).json()
+    b = client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")}).json()
+    r = client.post("/papers/summarize", json={"paper_ids": [a["paper_id"], b["paper_id"]]})
+    assert r.status_code == 200, r.text
+    summary = r.json()
+    assert summary["count"] == 2
+    assert "# Selection brief" in summary["markdown"]
+    assert isinstance(summary["methods"], list)
 
 
 def test_ingest_rejects_oversized_upload(monkeypatch: pytest.MonkeyPatch) -> None:

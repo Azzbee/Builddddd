@@ -217,6 +217,7 @@ def _absorb(provenance: Provenance, result: Any) -> None:
         entry = provenance.papers.get(chunk.get("paper_id", ""))
         if entry and entry.get("snippet") is None:
             entry["snippet"] = (chunk.get("text") or "")[:280]
+            entry["page"] = chunk.get("page")
             if chunk.get("section"):
                 entry["sections"].add(chunk["section"])
     for key in ("papers", "neighbors"):

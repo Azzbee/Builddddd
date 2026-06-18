@@ -98,6 +98,25 @@ def test_chunker_deterministic_ids() -> None:
     assert [c.chunk_id for c in a] == [c.chunk_id for c in b]
 
 
+def test_chunker_carries_page_for_deep_linking() -> None:
+    doc = ParsedDocument(
+        title="t",
+        abstract="Abstract text about forecasting that is sufficiently long.",
+        sections=[
+            ParsedSection(
+                section_id="s1", title="Results",
+                text="We beat the ARIMA baseline on RMSE across all forecast horizons tested.",
+                page=7,
+            ),
+        ],
+    )
+    chunks = chunk_document(doc, "p1")
+    abstract = next(c for c in chunks if c.section_id == "abstract")
+    results = next(c for c in chunks if c.section_id == "s1")
+    assert abstract.page == 1  # abstract anchors to page 1
+    assert results.page == 7  # section page propagates to its chunks
+
+
 # --------------------------------------------------------------------------- pdf utils
 def _valid_pdf_bytes() -> bytes:
     return b"%PDF-1.7\n" + b"x" * 5000

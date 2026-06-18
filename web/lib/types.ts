@@ -85,6 +85,38 @@ export interface Citation {
   section: string | null;
   evidence_location: string | null;
   snippet: string | null;
+  page: number | null;
+}
+
+export interface PdfMeta {
+  paper_id: string;
+  available: boolean;
+  pages: number;
+  size: number;
+}
+
+export interface SelectionSummary {
+  count: number;
+  papers: {
+    paper_id: string;
+    title: string;
+    year: number | null;
+    key: string;
+    representative_claim: string | null;
+  }[];
+  methods: string[];
+  datasets: string[];
+  domains: string[];
+  year_range: [number, number] | null;
+  open_problems: { problem: string; mentions: number }[];
+  contradictions: {
+    source_paper: string;
+    source_text: string;
+    target_paper: string;
+    target_text: string;
+    confidence: number;
+  }[];
+  markdown: string;
 }
 
 export interface AgentAnswer {

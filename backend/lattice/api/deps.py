@@ -21,6 +21,7 @@ from lattice.db.aux_stores import (
     InMemoryWatchStore,
     WatchStore,
 )
+from lattice.db.blobs import BlobStore, InMemoryBlobStore
 from lattice.db.cards import CorpusStore, InMemoryCardStore, InMemoryJobStore, JobStore
 from lattice.db.vector import InMemoryVectorStore, VectorStore
 from lattice.embeddings.chunks import ChunkEmbedder
@@ -43,6 +44,7 @@ class Container:
     ingestion: IngestionService
     watch: WatchStore
     digests: DigestStore
+    blobs: BlobStore
 
     def make_agent(self) -> RagAgent:
         toolbox = Toolbox(
@@ -74,8 +76,10 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
     graph: GraphStore
     watch: WatchStore
     digests: DigestStore
+    blobs: BlobStore
     reader = None
     if settings.persistent and _persist_pool is not None and _persist_graph is not None:
+        from lattice.db.blobs import PgBlobStore
         from lattice.db.pg_stores import (
             PgCardStore,
             PgDigestStore,
@@ -90,6 +94,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         jobs = PgJobStore(_persist_pool, ws)
         watch = PgWatchStore(_persist_pool, ws)
         digests = PgDigestStore(_persist_pool, ws)
+        blobs = PgBlobStore(_persist_pool, ws)
         graph = _persist_graph
         reader = Neo4jGraphReader(_persist_graph)
     else:
@@ -98,6 +103,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         jobs = InMemoryJobStore()
         watch = InMemoryWatchStore()
         digests = InMemoryDigestStore()
+        blobs = InMemoryBlobStore()
         graph = FakeGraphStore()
 
     llm: LLMClient
@@ -123,6 +129,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         parser=parser,
         vectors=vectors,
         cards=cards,
+        blobs=blobs,
         graph=graph,
         reader=reader,
         enricher=enricher,
@@ -140,6 +147,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         ingestion=ingestion,
         watch=watch,
         digests=digests,
+        blobs=blobs,
     )
 
 

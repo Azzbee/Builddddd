@@ -15,22 +15,39 @@ function colorFor(community: number): string {
   return PALETTE[community % PALETTE.length];
 }
 
+interface Rect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export function GraphExplorer({
   data,
   onSelect,
   highlight = "",
+  lassoMode = false,
+  selectedIds,
+  onLassoSelect,
 }: {
   data: GraphData;
   onSelect: (node: GraphNode | null) => void;
   highlight?: string;
+  lassoMode?: boolean;
+  selectedIds?: Set<string>;
+  onLassoSelect?: (ids: string[]) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<Sigma | null>(null);
+  const graphRef = useRef<Graph | null>(null);
   const [hoverEdge, setHoverEdge] = useState<GraphEdge | null>(null);
+  const [rect, setRect] = useState<Rect | null>(null);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!containerRef.current || data.nodes.length === 0) return;
     const graph = new Graph({ multi: false, type: "undirected" });
+    graphRef.current = graph;
 
     data.nodes.forEach((n, i) => {
       const angle = (2 * Math.PI * i) / data.nodes.length;
@@ -73,15 +90,22 @@ export function GraphExplorer({
     return () => {
       renderer.kill();
       rendererRef.current = null;
+      graphRef.current = null;
     };
   }, [data, onSelect]);
 
-  // Highlight nodes matching the search term; dim the rest.
+  // Highlight nodes matching the search term and any lasso-selected nodes; dim the rest.
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
     const term = highlight.trim().toLowerCase();
-    renderer.setSetting("nodeReducer", (_node, attrs) => {
+    const sel = selectedIds && selectedIds.size > 0 ? selectedIds : null;
+    renderer.setSetting("nodeReducer", (node, attrs) => {
+      if (sel) {
+        return sel.has(node)
+          ? { ...attrs, zIndex: 2, highlighted: true, color: "#f0b429" }
+          : { ...attrs, color: "#2a3142", label: "", zIndex: 0 };
+      }
       if (!term) return attrs;
       const match = String(attrs.label || "").toLowerCase().includes(term);
       return match
@@ -89,11 +113,80 @@ export function GraphExplorer({
         : { ...attrs, color: "#2a3142", label: "", zIndex: 0 };
     });
     renderer.refresh();
-  }, [highlight]);
+  }, [highlight, selectedIds]);
+
+  // Lasso: drag a rectangle over the canvas to select the nodes inside it.
+  function lassoStart(e: React.MouseEvent) {
+    if (!lassoMode || !containerRef.current) return;
+    const r = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    dragRef.current = { x, y };
+    setRect({ x0: x, y0: y, x1: x, y1: y });
+  }
+
+  function lassoMove(e: React.MouseEvent) {
+    if (!dragRef.current || !containerRef.current) return;
+    const r = containerRef.current.getBoundingClientRect();
+    setRect({
+      x0: dragRef.current.x,
+      y0: dragRef.current.y,
+      x1: e.clientX - r.left,
+      y1: e.clientY - r.top,
+    });
+  }
+
+  function lassoEnd() {
+    const renderer = rendererRef.current;
+    const graph = graphRef.current;
+    if (!dragRef.current || !rect || !renderer || !graph) {
+      dragRef.current = null;
+      setRect(null);
+      return;
+    }
+    const xMin = Math.min(rect.x0, rect.x1);
+    const xMax = Math.max(rect.x0, rect.x1);
+    const yMin = Math.min(rect.y0, rect.y1);
+    const yMax = Math.max(rect.y0, rect.y1);
+    const ids: string[] = [];
+    if (xMax - xMin > 3 && yMax - yMin > 3) {
+      graph.forEachNode((node) => {
+        const p = renderer.graphToViewport({
+          x: graph.getNodeAttribute(node, "x") as number,
+          y: graph.getNodeAttribute(node, "y") as number,
+        });
+        if (p.x >= xMin && p.x <= xMax && p.y >= yMin && p.y <= yMax) ids.push(node);
+      });
+    }
+    dragRef.current = null;
+    setRect(null);
+    if (ids.length > 0) onLassoSelect?.(ids);
+  }
 
   return (
     <div className="relative h-[70vh] w-full overflow-hidden rounded-lg border border-border bg-panel">
       <div ref={containerRef} className="h-full w-full" />
+      {lassoMode && (
+        <div
+          className="absolute inset-0 z-10 cursor-crosshair"
+          onMouseDown={lassoStart}
+          onMouseMove={lassoMove}
+          onMouseUp={lassoEnd}
+          onMouseLeave={lassoEnd}
+        >
+          {rect && (
+            <div
+              className="absolute border border-accent bg-accent/10"
+              style={{
+                left: Math.min(rect.x0, rect.x1),
+                top: Math.min(rect.y0, rect.y1),
+                width: Math.abs(rect.x1 - rect.x0),
+                height: Math.abs(rect.y1 - rect.y0),
+              }}
+            />
+          )}
+        </div>
+      )}
       {data.nodes.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-muted">
           No graph yet. Ingest papers to populate it.

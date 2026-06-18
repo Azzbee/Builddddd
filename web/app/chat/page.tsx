@@ -93,10 +93,14 @@ export default function ChatPage() {
                       {t.citations.map((c) => (
                         <li key={c.marker}>
                           [{c.marker}]{" "}
-                          <Link href={`/papers/${c.paper_id}`} className="text-accent hover:underline">
+                          <Link
+                            href={c.page ? `/papers/${c.paper_id}?page=${c.page}` : `/papers/${c.paper_id}`}
+                            className="text-accent hover:underline"
+                          >
                             {c.title || c.paper_id}
                           </Link>
                           {c.evidence_location ? ` · ${c.evidence_location}` : ""}
+                          {c.page ? ` · p.${c.page}` : ""}
                         </li>
                       ))}
                     </ol>

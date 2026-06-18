@@ -22,16 +22,19 @@ class Provenance:
 
     def add_chunk(self, hit: ChunkHit) -> None:
         entry = self.papers.setdefault(
-            hit.paper_id, {"title": hit.title, "sections": set(), "snippet": None, "evidence": None}
+            hit.paper_id,
+            {"title": hit.title, "sections": set(), "snippet": None, "evidence": None, "page": None},
         )
         entry["sections"].add(hit.section_title)
         if entry["snippet"] is None:
             entry["snippet"] = hit.text[:280]
             entry["evidence"] = hit.evidence_location or hit.section_title
+            entry["page"] = hit.page
 
     def add_paper(self, paper_id: str, title: str, evidence: str | None = None) -> None:
         entry = self.papers.setdefault(
-            paper_id, {"title": title, "sections": set(), "snippet": None, "evidence": evidence}
+            paper_id,
+            {"title": title, "sections": set(), "snippet": None, "evidence": evidence, "page": None},
         )
         entry["title"] = entry.get("title") or title
 
@@ -58,6 +61,7 @@ def build_citations(claimed: list[dict[str, Any]], provenance: Provenance) -> li
                 section=c.get("section") or next(iter(entry["sections"]), None),
                 evidence_location=c.get("evidence_location") or entry.get("evidence"),
                 snippet=entry.get("snippet"),
+                page=entry.get("page"),
             )
         )
         marker += 1

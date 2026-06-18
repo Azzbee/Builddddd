@@ -122,6 +122,7 @@ class Toolbox:
                     "text": h.text,
                     "score": round(h.score, 4),
                     "evidence_location": h.evidence_location or h.section_title,
+                    "page": h.page,
                 }
                 for h in hits
             ]

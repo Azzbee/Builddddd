@@ -27,6 +27,9 @@ an optional `X-Workspace-Id` header (defaults to the configured workspace).
 | GET | `/papers/{id}` | Full PaperCard |
 | GET | `/papers/{id}/neighbors` | Weighted neighbors |
 | POST | `/papers/{id}/review` | Human-in-the-loop card corrections |
+| POST | `/papers/summarize` | `{ "paper_ids": [...] }` -> grounded brief for a selection (graph lasso) |
+| GET | `/papers/{id}/pdf` | Stream the stored source PDF (inline `application/pdf`) |
+| GET | `/papers/{id}/pdf/meta` | `{ available, pages, size }` for the reader UI |
 | GET | `/graph?min_weight&year_from&year_to` | Nodes + edges for the explorer |
 | GET | `/graph/stats` | Papers / edges / communities |
 

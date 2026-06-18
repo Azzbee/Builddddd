@@ -20,6 +20,7 @@ from lattice.core.errors import DuplicateError
 from lattice.core.hashing import content_hash, normalize_arxiv, normalize_doi, stable_id
 from lattice.core.llm import LLMClient
 from lattice.core.logging import get_logger
+from lattice.db.blobs import BlobStore, InMemoryBlobStore
 from lattice.db.cards import CorpusStore
 from lattice.db.vector import VectorRecord, VectorStore
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
@@ -86,6 +87,8 @@ class IngestionService:
     parser: Parser
     vectors: VectorStore
     cards: CorpusStore
+    #: Raw PDF storage for the in-app reader + citation deep-linking.
+    blobs: BlobStore = field(default_factory=InMemoryBlobStore)
     graph: GraphStore = field(default_factory=FakeGraphStore)
     #: Optional Neo4j-backed reader; when set, read paths query the live graph
     #: instead of the in-memory mirror (production cross-process correctness).
@@ -233,6 +236,7 @@ class IngestionService:
                 text=c.text,
                 embedding=chunk_vecs[c.chunk_id],
                 evidence_location=c.section_title,
+                page=c.page,
             )
             for c in chunks
         ]
@@ -313,6 +317,11 @@ class IngestionService:
             )
 
         await self.cards.put_card(card)
+        # Persist the source PDF last (after the card exists, for the FK), so the
+        # reader can open it and citations can deep-link to a page.
+        if ctx.raw_pdf:
+            meta = await self.blobs.put(pid, ctx.raw_pdf, content_hash=ctx.job.content_hash)
+            ctx.extra["pdf_pages"] = meta.pages
         self._related[pid] = edges
         ctx.extra["edges_written"] = len(edges)
 
@@ -646,6 +655,132 @@ class IngestionService:
             if card.paper_id not in read_ids
         ]
         return [s.to_json() for s in rank_reading_queue(candidates, corpus_methods)]
+
+    # ------------------------------------------------------------------ selection summary
+    async def summarize_papers(self, paper_ids: list[str]) -> dict[str, object]:
+        """Synthesize a grounded brief for a hand-selected subset of papers.
+
+        Drives the explorer's lasso-select-to-summarize: given the ids inside a
+        selection, return shared methods/datasets/domains, the year span, common
+        open problems, any contradictions *within* the selection, a representative
+        claim per paper, and a rendered Markdown brief. Fully deterministic and
+        offline (no LLM), so it works in demo mode and is grounded by construction.
+        """
+        from collections import Counter
+
+        from lattice.core.hashing import normalize_text
+        from lattice.rag.related_work import bibtex_key
+
+        wanted = list(dict.fromkeys(paper_ids))  # dedupe, preserve order
+        by_id = {c.paper_id: c for c in await self.cards.all_cards()}
+        cards = [by_id[pid] for pid in wanted if pid in by_id]
+        if not cards:
+            return {
+                "count": 0, "papers": [], "methods": [], "datasets": [], "domains": [],
+                "year_range": None, "open_problems": [], "contradictions": [],
+                "markdown": "_No papers in selection._\n",
+            }
+
+        methods: Counter[str] = Counter()
+        datasets: Counter[str] = Counter()
+        domains: Counter[str] = Counter()
+        problems: Counter[str] = Counter()
+        problem_canonical: dict[str, str] = {}
+        years: list[int] = []
+        for c in cards:
+            methods.update(m for m in (c.methods_taxonomy + c.methodology.techniques) if m.strip())
+            datasets.update(d.name for d in c.datasets if d.name.strip())
+            domains.update(d for d in c.domains if d.strip())
+            if c.year is not None:
+                years.append(c.year)
+            for fw in c.future_work:
+                key = normalize_text(fw)
+                if key:
+                    problem_canonical.setdefault(key, fw.strip())
+                    problems[key] += 1
+
+        # Contradictions whose *both* endpoints fall inside the selection.
+        selected = {c.paper_id for c in cards}
+        contradictions = [
+            {
+                "source_paper": e.source_paper, "source_text": e.source_text,
+                "target_paper": e.target_paper, "target_text": e.target_text,
+                "confidence": round(e.confidence, 3),
+            }
+            for e in await self.get_claim_relations("CONTRADICTS")
+            if e.source_paper in selected and e.target_paper in selected
+        ]
+
+        papers = [
+            {
+                "paper_id": c.paper_id, "title": c.title, "year": c.year,
+                "key": bibtex_key(c),
+                "representative_claim": c.key_results[0].claim if c.key_results else None,
+            }
+            for c in sorted(cards, key=lambda c: (c.year or 0))
+        ]
+        top_methods = [m for m, _ in methods.most_common(8)]
+        top_datasets = [d for d, _ in datasets.most_common(6)]
+        top_domains = [d for d, _ in domains.most_common(4)]
+        shared_problems = [
+            {"problem": problem_canonical[k], "mentions": n}
+            for k, n in problems.most_common(6)
+            if n >= 2
+        ]
+        year_range = [min(years), max(years)] if years else None
+
+        markdown = self._summary_markdown(
+            cards, top_methods, top_datasets, top_domains, year_range,
+            shared_problems, contradictions,
+        )
+        return {
+            "count": len(cards),
+            "papers": papers,
+            "methods": top_methods,
+            "datasets": top_datasets,
+            "domains": top_domains,
+            "year_range": year_range,
+            "open_problems": shared_problems,
+            "contradictions": contradictions,
+            "markdown": markdown,
+        }
+
+    @staticmethod
+    def _summary_markdown(
+        cards: list[PaperCard],
+        methods: list[str],
+        datasets: list[str],
+        domains: list[str],
+        year_range: list[int] | None,
+        problems: list[dict[str, object]],
+        contradictions: list[dict[str, object]],
+    ) -> str:
+        span = f"{year_range[0]}-{year_range[1]}" if year_range else "n/a"
+        lines = [
+            f"# Selection brief - {len(cards)} papers",
+            "",
+            f"**Span:** {span}  -  **Themes:** {', '.join(domains) or 'mixed'}",
+            "",
+        ]
+        if methods:
+            lines += [f"**Shared methods:** {', '.join(methods)}", ""]
+        if datasets:
+            lines += [f"**Shared datasets:** {', '.join(datasets)}", ""]
+        if contradictions:
+            lines.append("## Tensions within the selection")
+            for ct in contradictions:
+                lines.append(f"- _{ct['source_text']}_ vs. _{ct['target_text']}_")
+            lines.append("")
+        if problems:
+            lines.append("## Recurring open problems")
+            for p in problems:
+                lines.append(f"- {p['problem']} ({p['mentions']} papers)")
+            lines.append("")
+        lines.append("## Papers")
+        for c in sorted(cards, key=lambda c: (c.year or 0)):
+            claim = f" — {c.key_results[0].claim}" if c.key_results else ""
+            lines.append(f"- **{c.title}** ({c.year or '?'}){claim}")
+        return "\n".join(lines).rstrip() + "\n"
 
     # ------------------------------------------------------------------ explorer
     async def graph_snapshot(self) -> GraphSnapshot:

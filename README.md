@@ -140,18 +140,32 @@ All eight PRD "extras" are built, not just stubbed:
 Plus Prometheus metrics (`/metrics`), a concrete vision fallback, and the weekly
 digest loop. See [`docs/API.md`](docs/API.md) for the full endpoint reference.
 
+Three more capabilities round out the experience:
+
+9. **LLM-judge RAG eval** - a RAGAS-style harness (`lattice eval --judge`) that grades
+   answers on faithfulness (atomic-claim entailment), answer relevance, context
+   precision, and correctness via the same provider-agnostic LLM client. The
+   dependency-free offline harness still gates CI; the judge adds depth when a key
+   is present. Abstentions are scored without a model call.
+10. **In-app PDF reader + citation deep-linking** - source PDFs are stored at ingest
+    time; the paper page embeds the PDF and chat citations carry the page number, so
+    `[3] · p.8` jumps straight to the evidence.
+11. **Lasso-select-to-summarize** - drag a box over the graph to select a cluster and
+    get an instant, grounded brief: shared methods/datasets, year span, recurring
+    open problems, and any contradictions *within* the selection.
+
 ## Status
 
 Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plus
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 250+ tests run fully offline; `mypy --strict` and `ruff` clean.
+- Backend: 290+ tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
 - The production datastore code is verified **live in CI**: a dedicated job spins up
   real Postgres+pgvector and Neo4j service containers and runs the integration
-  suite (chunk ANN/hybrid search, idempotent graph writes, bi-temporal edges, claim
-  relations, and the Neo4j read paths) on every push.
-- Web app builds clean (14 routes). Static SQL is parsed/validated with sqlglot.
+  suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,
+  bi-temporal edges, claim relations, and the Neo4j read paths) on every push.
+- Web app builds clean (15 routes). Static SQL is parsed/validated with sqlglot.
 - Offline demo mode (`make demo`) loads a populated graph with zero external
   services.
 

@@ -37,6 +37,23 @@ def _text(el: object) -> str:
     return re.sub(r"\s+", " ", raw).strip()
 
 
+def _page_from_coords(*els: object) -> int | None:
+    """Leading page number from a TEI ``coords`` attribute ("page,x,y,w,h;...").
+
+    GROBID stamps these when ``teiCoordinates`` is requested; returns the first
+    page seen across the given elements, or None when coordinates are absent.
+    """
+    for el in els:
+        coords = getattr(el, "get", lambda _k: None)("coords") if el is not None else None
+        if not coords:
+            continue
+        head = str(coords).split(";", 1)[0]
+        page_str = head.split(",", 1)[0].strip()
+        if page_str.isdigit():
+            return int(page_str)
+    return None
+
+
 def _first_year(text: str) -> int | None:
     m = _YEAR_RE.search(text or "")
     return int(m.group(0)) if m else None
@@ -106,6 +123,7 @@ def parse_tei(xml: str | bytes) -> ParsedDocument:
         if not body and not head_text:
             continue
         section_title = head_text or f"Section {i + 1}"
+        first_p = div.find("t:p", _NS)
         sections.append(
             ParsedSection(
                 section_id=stable_id("grobid_section", section_title, str(i)),
@@ -114,6 +132,7 @@ def parse_tei(xml: str | bytes) -> ParsedDocument:
                 level=1,
                 region_type=RegionType.PROSE,
                 parse_confidence=1.0,
+                page=_page_from_coords(head, first_p),
             )
         )
 
@@ -173,6 +192,8 @@ class GrobidClient:
             "consolidateHeader": str(self._settings.consolidate_header),
             "consolidateCitations": str(self._settings.consolidate_citations),
             "includeRawCitations": "1",
+            # Ask GROBID to stamp page coordinates so sections carry a page anchor.
+            "teiCoordinates": self._settings.tei_coordinates,
         }
         try:
             resp = await client.post(url, files=files, data=data)

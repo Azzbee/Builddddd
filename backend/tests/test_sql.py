@@ -13,11 +13,12 @@ import pytest
 
 sqlglot = pytest.importorskip("sqlglot")
 
+from lattice.db.blobs import BLOB_SQL  # noqa: E402
 from lattice.db.pg_stores import PG_STORE_SQL  # noqa: E402
 from lattice.db.vector import PGVECTOR_SQL  # noqa: E402
 
 SCHEMA = Path(__file__).parent.parent / "lattice" / "db" / "schema.sql"
-ALL_SQL = {**PGVECTOR_SQL, **PG_STORE_SQL}
+ALL_SQL = {**PGVECTOR_SQL, **PG_STORE_SQL, **BLOB_SQL}
 
 
 def test_schema_sql_parses() -> None:

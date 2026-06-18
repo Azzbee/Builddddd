@@ -5,10 +5,14 @@
     lattice ingest paper.pdf                 # ingest a local PDF (in-process)
     lattice query "which methods beat ARIMA?"
     lattice eval [--ci]                      # run the offline eval harness
+    lattice eval --judge                     # LLM-graded RAG eval (needs a key)
     lattice version
 
 ``ingest`` and ``query`` run against an in-process container using current config
 (set LATTICE_DEMO_MODE=true to run fully offline with deterministic models).
+``eval --judge`` runs the agent over the golden Q/A set and grades the answers
+with an LLM (faithfulness / relevance / context precision / correctness); it needs
+a real provider key, so it is separate from the dependency-free offline harness.
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ev = sub.add_parser("eval", help="run the offline eval harness")
     ev.add_argument("--ci", action="store_true")
+    ev.add_argument("--judge", action="store_true", help="LLM-graded RAG eval (needs a key)")
 
     sub.add_parser("version", help="print the version")
     return p
@@ -56,6 +61,40 @@ async def _ingest(filename: str, data: bytes) -> int:
     await container.jobs.save(job)
     print(json.dumps(job.model_dump(mode="json"), indent=2, default=str))
     return 0 if job.status.value in ("succeeded", "duplicate") else 1
+
+
+def _contexts_from_result(result: object) -> list[str]:
+    """Collect retrieved chunk texts from an AgentResult's tool calls."""
+    ctx: list[str] = []
+    for tc in getattr(result, "tool_calls", []):
+        res = getattr(tc, "result", None)
+        if isinstance(res, dict):
+            for ch in res.get("chunks", []) or []:
+                if isinstance(ch, dict) and ch.get("text"):
+                    ctx.append(str(ch["text"]))
+    return ctx
+
+
+async def _judge_eval(ci: bool) -> int:
+    from lattice.api.deps import build_container
+    from lattice.eval.golden import load_qa_pairs
+    from lattice.eval.llm_judge import LLMJudge, evaluate_rag_judged
+
+    container = build_container()
+    pairs = load_qa_pairs()
+    results = []
+    contexts = []
+    for qa in pairs:
+        res = await container.make_agent().run(qa.question)
+        results.append(res)
+        contexts.append(_contexts_from_result(res))
+    judge = LLMJudge(container.llm, container.settings.rag.agent_model)
+    report = await evaluate_rag_judged(pairs, results, judge, contexts=contexts)
+    print(json.dumps(report.to_json(), indent=2))
+    if ci and not report.passes():
+        print("JUDGED EVAL CHECK FAILED", file=sys.stderr)
+        return 1
+    return 0
 
 
 async def _query(question: str) -> int:
@@ -80,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "eval":
+        if getattr(args, "judge", False):
+            return asyncio.run(_judge_eval(args.ci))
         from lattice.eval.runner import run_offline_eval
 
         report, ok = run_offline_eval()

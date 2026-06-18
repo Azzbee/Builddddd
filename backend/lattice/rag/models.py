@@ -26,6 +26,7 @@ class Citation:
     section: str | None = None
     evidence_location: str | None = None
     snippet: str | None = None
+    page: int | None = None  # PDF page for deep-linking, when known
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class Citation:
             "section": self.section,
             "evidence_location": self.evidence_location,
             "snippet": self.snippet,
+            "page": self.page,
         }
 
 
@@ -47,6 +49,7 @@ class ChunkHit:
     text: str
     score: float
     evidence_location: str | None = None
+    page: int | None = None
 
 
 @dataclass

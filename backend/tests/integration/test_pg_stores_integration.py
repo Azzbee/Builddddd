@@ -27,6 +27,7 @@ async def pool():  # type: ignore[no-untyped-def]
     pool = await create_pg_pool(DSN)
     async with pool.acquire() as conn:
         await conn.execute(SCHEMA.read_text())
+        await conn.execute("DELETE FROM pdf_blobs")
         await conn.execute("DELETE FROM chunks")
         await conn.execute("DELETE FROM ingest_jobs")
         await conn.execute("DELETE FROM watch_queue")
@@ -34,6 +35,7 @@ async def pool():  # type: ignore[no-untyped-def]
         await conn.execute("DELETE FROM papers")
     yield pool
     async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM pdf_blobs")
         await conn.execute("DELETE FROM chunks")
         await conn.execute("DELETE FROM ingest_jobs")
         await conn.execute("DELETE FROM watch_queue")
@@ -117,6 +119,35 @@ async def test_watch_store_enqueue_dedup_and_status(pool) -> None:  # type: igno
     assert await store.set_status("2406.1", "approved") is True
     assert {p["arxiv_id"] for p in await store.pending()} == {"2406.2"}
     assert await store.set_status("missing", "approved") is False
+
+
+async def test_pdf_blob_store_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
+    import io
+
+    import pypdf
+    from lattice.db.blobs import PgBlobStore
+
+    # A paper row must exist first (pdf_blobs.paper_id FK -> papers).
+    await PgCardStore(pool, "ws").put_card(_card("p1", "Copper LSTM"))
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.add_blank_page(width=612, height=792)
+    buf = io.BytesIO()
+    writer.write(buf)
+    data = buf.getvalue()
+
+    store = PgBlobStore(pool, "ws")
+    meta = await store.put("p1", data)
+    assert meta.size == len(data) and meta.pages == 2
+    assert await store.get("p1") == data
+    fetched = await store.meta("p1")
+    assert fetched is not None and fetched.pages == 2
+    # Upsert replaces bytes in place.
+    await store.put("p1", data + b"%more")
+    assert await store.get("p1") == data + b"%more"
+    # Workspace isolation.
+    assert await PgBlobStore(pool, "other").get("p1") is None
 
 
 async def test_digest_store_add_latest_history(pool) -> None:  # type: ignore[no-untyped-def]

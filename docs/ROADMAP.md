@@ -49,15 +49,21 @@ Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
 (`core/metrics.py`, `/metrics`); and the weekly digest generation loop
 (`/digest/generate`).
 
+| Extra | State | Where |
+| --- | --- | --- |
+| 9. LLM-judge RAG eval (RAGAS-style, faithfulness/relevance/precision/correctness) | Done | `eval/llm_judge.py`, `lattice eval --judge` |
+| 10. Source-PDF storage + in-app reader + citation page deep-linking | Done | `db/blobs.py`, `/papers/{id}/pdf`, `web/app/papers/[id]` |
+| 11. Lasso-select-to-summarize in the explorer | Done | `IngestionService.summarize_papers`, `/papers/summarize`, `web/components/GraphExplorer.tsx` |
+
 ## Production verification
 
 The production datastore code is no longer "written but unrun": a CI job spins up
 real Postgres+pgvector and Neo4j service containers and runs the live integration
 suite on every push (chunk ANN + hybrid search, idempotent graph writes,
 bi-temporal edges, claim relations, the Neo4j read paths, and the Postgres card /
-job / watch / digest stores). Backend coverage is ~92% with an 85% CI floor.
-Persistence is wired by `LATTICE_PERSISTENT` (on by default in docker-compose), and
-a `lattice` CLI provides serve/demo/ingest/query/eval.
+job / watch / digest / PDF-blob stores). Backend coverage is ~92% with an 85% CI
+floor. Persistence is wired by `LATTICE_PERSISTENT` (on by default in
+docker-compose), and a `lattice` CLI provides serve/demo/ingest/query/eval.
 
 ## Future work
 

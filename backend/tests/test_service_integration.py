@@ -136,6 +136,39 @@ async def test_full_ingest_two_papers_creates_graph_and_edge() -> None:
     assert any("RELATED_TO" in q for q, _ in graph.calls)
 
 
+async def test_source_pdf_is_stored_for_reader() -> None:
+    docs = {"paper_a.pdf": _doc("LSTM copper forecasting", "LSTM", ["10.1/a"])}
+    llm = ScriptedLLM([_content(["LSTM"])])
+    svc = _service(FakeParser(docs), llm, FakeGraphStore())
+    pdf = _pdf("A")
+    job = await svc.ingest_pdf("paper_a.pdf", pdf)
+    assert job.paper_id is not None
+    # The raw PDF is persisted keyed by paper_id so the reader can open it.
+    assert await svc.blobs.get(job.paper_id) == pdf
+    meta = await svc.blobs.meta(job.paper_id)
+    assert meta is not None and meta.size == len(pdf)
+
+
+async def test_summarize_selected_papers_brief() -> None:
+    docs = {
+        "paper_a.pdf": _doc("LSTM copper forecasting", "LSTM attention", ["10.1/a"]),
+        "paper_b.pdf": _doc("GRU copper forecasting", "GRU", ["10.1/b"]),
+    }
+    llm = ScriptedLLM([_content(["LSTM", "attention"]), _content(["GRU"])])
+    svc = _service(FakeParser(docs), llm, FakeGraphStore())
+    a = await svc.ingest_pdf("paper_a.pdf", _pdf("A"))
+    b = await svc.ingest_pdf("paper_b.pdf", _pdf("B"))
+
+    summary = await svc.summarize_papers([a.paper_id, b.paper_id])
+    assert summary["count"] == 2
+    assert summary["year_range"] == [2024, 2024]
+    assert "LME Copper" in summary["datasets"]
+    assert "commodity markets" in summary["domains"]
+    assert "# Selection brief" in summary["markdown"]
+    # Unknown ids are ignored; empty selection yields an empty brief.
+    assert (await svc.summarize_papers(["does-not-exist"]))["count"] == 0
+
+
 async def test_reingest_is_idempotent_duplicate() -> None:
     docs = {"paper_a.pdf": _doc("LSTM copper forecasting", "LSTM", ["10.1/a"])}
     graph = FakeGraphStore()

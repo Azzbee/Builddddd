@@ -28,6 +28,7 @@ class VectorRecord:
     text: str
     embedding: list[float]
     evidence_location: str | None = None
+    page: int | None = None
 
 
 class VectorStore(Protocol):
@@ -127,6 +128,7 @@ class InMemoryVectorStore:
                 text=r.text,
                 score=score,
                 evidence_location=r.evidence_location,
+                page=r.page,
             )
             for score, r in scored[:k]
         ]
@@ -140,8 +142,8 @@ def _squash(x: float) -> float:
 # validated (see tests/test_sql.py, which parses each with the Postgres dialect).
 SQL_UPSERT_CHUNK = """
 INSERT INTO chunks (chunk_id, paper_id, workspace_id, title, section_title,
-                    text, embedding, evidence_location)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    text, embedding, evidence_location, page)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (chunk_id) DO UPDATE SET embedding = EXCLUDED.embedding, text = EXCLUDED.text
 """
 
@@ -153,7 +155,7 @@ GROUP BY paper_id ORDER BY sim DESC LIMIT $4
 """
 
 SQL_HYBRID_SEARCH = """
-SELECT chunk_id, paper_id, title, section_title, text, evidence_location,
+SELECT chunk_id, paper_id, title, section_title, text, evidence_location, page,
        (1 - (embedding <=> $1)) AS vec_score,
        ts_rank(to_tsvector('english', text), plainto_tsquery('english', $2)) AS kw_score
 FROM chunks WHERE workspace_id = $3
@@ -198,7 +200,7 @@ class PgVectorStore:  # pragma: no cover - requires Postgres + pgvector
                 SQL_UPSERT_CHUNK,
                 [
                     (r.chunk_id, r.paper_id, r.workspace_id, r.title, r.section_title,
-                     r.text, r.embedding, r.evidence_location)
+                     r.text, r.embedding, r.evidence_location, r.page)
                     for r in records
                 ],
             )
@@ -223,6 +225,7 @@ class PgVectorStore:  # pragma: no cover - requires Postgres + pgvector
                     chunk_id=r["chunk_id"], paper_id=r["paper_id"], title=r["title"],
                     section_title=r["section_title"], text=r["text"],
                     score=float(r["vec_score"]), evidence_location=r["evidence_location"],
+                    page=r["page"],
                 )
                 for r in rows
             ]

@@ -29,6 +29,29 @@ def test_parse_tei_extracts_sections() -> None:
     assert "attention" in method.text.lower()
 
 
+_TEI_WITH_COORDS = """<?xml version="1.0"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <text><body>
+    <div><head coords="3,72.0,80.0,200.0,12.0">Results</head>
+      <p>We beat ARIMA on RMSE across all horizons tested in the study.</p></div>
+    <div><head>Discussion</head>
+      <p coords="5,72.0,80.0,200.0,12.0">Limitations follow in this paragraph here.</p></div>
+  </body></text>
+</TEI>"""
+
+
+def test_parse_tei_extracts_page_from_coords() -> None:
+    doc = parse_tei(_TEI_WITH_COORDS)
+    by_title = {s.title: s for s in doc.sections}
+    assert by_title["Results"].page == 3  # from the head coords
+    assert by_title["Discussion"].page == 5  # falls back to the first <p> coords
+
+
+def test_parse_tei_page_is_none_without_coords() -> None:
+    doc = parse_tei(FIXTURE.read_bytes())
+    assert all(s.page is None for s in doc.sections)
+
+
 def test_parse_tei_extracts_references() -> None:
     doc = parse_tei(FIXTURE.read_bytes())
     assert len(doc.references) == 2

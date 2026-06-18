@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     text              TEXT NOT NULL,
     embedding         vector(1024),
     evidence_location TEXT,
+    page              INT,
     ordinal           INT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -107,3 +108,16 @@ CREATE TABLE IF NOT EXISTS digests (
     report        JSONB NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Raw source PDFs, for the in-app reader and citation deep-linking. Stored as
+-- bytea keyed by paper_id; page count is precomputed at ingest time.
+CREATE TABLE IF NOT EXISTS pdf_blobs (
+    paper_id      TEXT PRIMARY KEY REFERENCES papers(paper_id) ON DELETE CASCADE,
+    workspace_id  TEXT NOT NULL DEFAULT 'default',
+    data          BYTEA NOT NULL,
+    size          INT NOT NULL,
+    pages         INT NOT NULL DEFAULT 0,
+    content_hash  TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pdf_blobs_workspace ON pdf_blobs (workspace_id);
