@@ -32,6 +32,15 @@ class Specter2Embedder:
         self._local = local_backend or HashingEmbedder(dim=dim)
         self._dim = dim
 
+    @property
+    def text_backend(self) -> TextEmbedder:
+        """The local TextEmbedder backing this SPECTER space.
+
+        Use it to embed arbitrary text (e.g. watcher candidates) into the *same*
+        vector space as the corpus's paper embeddings, so cosine comparisons line up.
+        """
+        return self._local
+
     def from_precomputed(self, vector: list[float] | None) -> PaperEmbedding | None:
         if vector:
             return PaperEmbedding(vector=l2_normalize(vector), source="s2_precomputed")

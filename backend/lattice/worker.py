@@ -43,8 +43,12 @@ async def poll_arxiv(ctx: dict[str, Any]) -> int:
         for pid, feat in container.ingestion._features.items()
         if feat.specter is not None
     ]
+    # Embed candidates in the SAME space as the corpus paper vectors (SPECTER).
     scored = score_candidates(
-        results, corpus_vectors, embedder=container.chunk_embedder, floor=settings.watcher.similarity_floor
+        results,
+        corpus_vectors,
+        embedder=container.ingestion.specter.text_backend,
+        floor=settings.watcher.similarity_floor,
     )
     existing = {item["arxiv_id"] for item in container._watch_queue}
     added = 0
