@@ -1,5 +1,7 @@
 # Lattice
 
+![CI](https://github.com/azzbee/builddddd/actions/workflows/ci.yml/badge.svg)
+
 **A living knowledge graph for scientific literature.**
 
 Drop PDFs in, get back a queryable, visual, self-updating map of a research

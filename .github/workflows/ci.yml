@@ -31,7 +31,7 @@ jobs:
       - name: Mypy
         run: uv run mypy lattice
       - name: Pytest
-        run: uv run pytest --cov=lattice --cov-report=term-missing
+        run: uv run pytest --cov=lattice --cov-report=term-missing --cov-fail-under=85
 
   eval:
     name: Evals (extraction / retrieval / edge quality)
