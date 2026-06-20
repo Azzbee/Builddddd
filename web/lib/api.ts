@@ -1,6 +1,8 @@
 import type {
   AgentAnswer,
   GraphData,
+  GraphDelta,
+  GraphTimeline,
   IngestJob,
   MatrixCell,
   PaperCard,
@@ -50,6 +52,13 @@ export const api = {
     return URL.createObjectURL(await res.blob());
   },
   graph: (minWeight = 0) => get<GraphData>(`/graph?min_weight=${minWeight}`),
+  graphAsOf: (asOfYear: number, minWeight = 0) =>
+    get<GraphData>(`/graph?min_weight=${minWeight}&as_of_year=${asOfYear}`),
+  graphTimeline: () => get<GraphTimeline>("/graph/timeline"),
+  graphDelta: (sinceYear: number, untilYear?: number) =>
+    get<GraphDelta>(
+      `/graph/delta?since_year=${sinceYear}${untilYear != null ? `&until_year=${untilYear}` : ""}`,
+    ),
   graphStats: () => get<{ papers: number; edges: number; communities: number }>("/graph/stats"),
   query: (question: string) => post<AgentAnswer>("/query", { question }),
   matrix: (row: string, col: string) =>

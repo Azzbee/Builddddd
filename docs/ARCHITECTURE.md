@@ -132,6 +132,20 @@ context from the tool trace, and scores each item; abstentions are graded withou
 a model call. Because the judge is an injected `LLMClient`, the whole harness is
 unit-tested offline with a scripted model.
 
+## Time-travel (graph replay)
+
+`graph_snapshot(as_of_year=Y)` reconstructs the explorer graph as of a publication
+year: only papers published up to `Y` and edges whose both endpoints qualify are
+included, and (in the in-memory/demo path) communities and weighted-degree
+centrality are *recomputed on that subgraph* so the replay is faithful, not just a
+filter. The Neo4j reader applies the same year bound in Cypher (keeping its
+precomputed Louvain/PageRank). `graph_timeline` returns the year bounds and
+cumulative growth for the slider; `graph_delta(since, until)` is a set-difference
+of two reconstructed snapshots, so "what entered the field in (since, until]" is
+correct on both backends with no extra queries. Paper nodes carry a stable
+`created_at` (`coalesce` on first write) alongside the bi-temporal edge
+`valid_from`/`invalid_at`, so an ingest-time axis is available too.
+
 ## Source PDFs
 
 The raw PDF is persisted at the (final, transactional) linking stage via a

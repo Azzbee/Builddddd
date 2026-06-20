@@ -78,6 +78,20 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+export interface GraphTimeline {
+  min_year: number | null;
+  max_year: number | null;
+  buckets: { year: number; papers: number }[];
+}
+
+export interface GraphDelta {
+  since_year: number;
+  until_year: number | null;
+  new_papers: { paper_id: string; title: string; year: number | null }[];
+  new_edges: GraphEdge[];
+  counts: { papers: number; edges: number };
+}
+
 export interface Citation {
   marker: number;
   paper_id: string;

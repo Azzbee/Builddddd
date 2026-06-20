@@ -783,19 +783,32 @@ class IngestionService:
         return "\n".join(lines).rstrip() + "\n"
 
     # ------------------------------------------------------------------ explorer
-    async def graph_snapshot(self) -> GraphSnapshot:
+    async def graph_snapshot(self, as_of_year: int | None = None) -> GraphSnapshot:
         """Nodes + edges for the explorer, with quick community + centrality.
 
         Uses union-find communities and weighted-degree centrality so the demo
         graph is meaningful without a Neo4j GDS run. Production reads precomputed
         PageRank/Louvain from the graph store via the injected reader.
+
+        When ``as_of_year`` is set, the graph is reconstructed *as of* that year:
+        only papers published up to it (and edges whose both endpoints qualify) are
+        included, and communities/centrality are recomputed on that subgraph. This
+        powers the time-travel replay of how the field evolved.
         """
         if self.reader is not None:
-            return await self.reader.snapshot(self.settings.workspace_id)
+            return await self.reader.snapshot(self.settings.workspace_id, as_of_year)
         cards = {c.paper_id: c for c in await self.cards.all_cards()}
+        if as_of_year is not None:
+            cards = {
+                pid: c
+                for pid, c in cards.items()
+                if c.year is not None and c.year <= as_of_year
+            }
         # Deduplicate undirected edges (max weight).
         undirected: dict[tuple[str, str], GraphEdge] = {}
         for src, edges in self._related.items():
+            if src not in cards:  # time-travel: source filtered out
+                continue
             for e in edges:
                 if e.target_id not in cards:
                     continue
@@ -846,6 +859,52 @@ class IngestionService:
             for pid, card in cards.items()
         ]
         return GraphSnapshot(nodes=nodes, edges=list(undirected.values()))
+
+    async def graph_timeline(self) -> dict[str, object]:
+        """Year bounds + cumulative corpus growth, for the time-travel slider.
+
+        ``buckets`` is the running paper count up to and including each year, so the
+        UI can show how the field accreted and bound the slider to real data.
+        """
+        years = sorted(
+            c.year for c in await self.cards.all_cards() if c.year is not None
+        )
+        if not years:
+            return {"min_year": None, "max_year": None, "buckets": []}
+        lo, hi = years[0], years[-1]
+        buckets = [
+            {"year": y, "papers": sum(1 for yr in years if yr <= y)}
+            for y in range(lo, hi + 1)
+        ]
+        return {"min_year": lo, "max_year": hi, "buckets": buckets}
+
+    async def graph_delta(
+        self, since_year: int, until_year: int | None = None
+    ) -> dict[str, object]:
+        """What changed between two points on the publication-year axis.
+
+        Returns papers and edges present at ``until_year`` (default: now) but not at
+        ``since_year`` - i.e. what entered the field in (since, until]. Computed as a
+        set difference of two reconstructed snapshots, so it is correct for both the
+        in-memory and Neo4j-backed paths without any extra queries.
+        """
+        before = await self.graph_snapshot(as_of_year=since_year)
+        after = await self.graph_snapshot(as_of_year=until_year)
+        before_nodes = {n.id for n in before.nodes}
+        before_edges = {(e.source, e.target) for e in before.edges}
+        new_nodes = [n for n in after.nodes if n.id not in before_nodes]
+        new_edges = [e for e in after.edges if (e.source, e.target) not in before_edges]
+        new_nodes.sort(key=lambda n: (n.year or 0, n.title))
+        new_edges.sort(key=lambda e: e.weight, reverse=True)
+        return {
+            "since_year": since_year,
+            "until_year": until_year,
+            "new_papers": [
+                {"paper_id": n.id, "title": n.title, "year": n.year} for n in new_nodes
+            ],
+            "new_edges": [e.to_json() for e in new_edges],
+            "counts": {"papers": len(new_nodes), "edges": len(new_edges)},
+        }
 
     # ------------------------------------------------------------------ helpers
     def _ann_candidates(self, pid: str, new_feat: PaperFeatures) -> list[PaperFeatures]:

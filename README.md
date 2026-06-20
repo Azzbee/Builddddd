@@ -153,6 +153,10 @@ Three more capabilities round out the experience:
 11. **Lasso-select-to-summarize** - drag a box over the graph to select a cluster and
     get an instant, grounded brief: shared methods/datasets, year span, recurring
     open problems, and any contradictions *within* the selection.
+12. **Time-travel explorer** - a publication-year slider replays how the field formed:
+    the graph is reconstructed as of any year (communities + centrality recomputed on
+    that subgraph), with a "what's new since" delta of papers and links that arrived
+    after. The living graph, rewound.
 
 ## Status
 
@@ -160,7 +164,7 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 290+ tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
+- Backend: 295+ tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
 - The production datastore code is verified **live in CI**: a dedicated job spins up
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,

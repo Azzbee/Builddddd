@@ -20,7 +20,9 @@ from lattice.graph.store import GraphStore
 
 
 class GraphReader(Protocol):
-    async def snapshot(self, workspace_id: str) -> GraphSnapshot: ...
+    async def snapshot(
+        self, workspace_id: str, as_of_year: int | None = None
+    ) -> GraphSnapshot: ...
     async def neighbors(self, workspace_id: str, paper_id: str, min_weight: float) -> list[GraphEdge]: ...
     async def claim_relations(self, workspace_id: str, relation: str | None) -> list[ClaimEdge]: ...
     async def lineage(self, workspace_id: str, method: str) -> Lineage: ...
@@ -40,26 +42,34 @@ class Neo4jGraphReader:
     def __init__(self, store: GraphStore) -> None:
         self._store = store
 
-    async def snapshot(self, workspace_id: str) -> GraphSnapshot:
+    async def snapshot(
+        self, workspace_id: str, as_of_year: int | None = None
+    ) -> GraphSnapshot:
+        # Time-travel: restrict to papers published up to ``as_of_year`` (and edges
+        # whose both endpoints qualify). Community/centrality stay as the precomputed
+        # current values; the in-memory path recomputes them on the subgraph.
         node_rows = await self._store.execute(
             """
             MATCH (p:Paper {workspace_id: $ws})
+            WHERE $yr IS NULL OR (p.year IS NOT NULL AND p.year <= $yr)
             RETURN p.id AS id, p.title AS title, p.year AS year,
                    coalesce(p.community, 0) AS community,
                    coalesce(p.pagerank, 0.0) AS centrality,
                    coalesce(p.needs_review, false) AS needs_review
             """,
-            {"ws": workspace_id},
+            {"ws": workspace_id, "yr": as_of_year},
         )
         edge_rows = await self._store.execute(
             """
             MATCH (a:Paper {workspace_id: $ws})-[r:RELATED_TO]->(b:Paper {workspace_id: $ws})
             WHERE r.invalid_at IS NULL
+              AND ($yr IS NULL OR (a.year IS NOT NULL AND a.year <= $yr
+                                   AND b.year IS NOT NULL AND b.year <= $yr))
             RETURN a.id AS source, b.id AS target, r.weight AS weight,
                    r.weight_components AS components
             ORDER BY r.weight DESC
             """,
-            {"ws": workspace_id},
+            {"ws": workspace_id, "yr": as_of_year},
         )
         # Normalize centrality to [0,1] for display parity with the in-memory path.
         max_c = max((float(r["centrality"]) for r in node_rows), default=1.0) or 1.0

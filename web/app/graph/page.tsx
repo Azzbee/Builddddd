@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { GraphData, GraphNode, SelectionSummary } from "@/lib/types";
+import type { GraphData, GraphDelta, GraphNode, GraphTimeline, SelectionSummary } from "@/lib/types";
 
 // Sigma touches the DOM/WebGL, so load it client-only.
 const GraphExplorer = dynamic(
@@ -22,10 +22,44 @@ export default function GraphPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [summary, setSummary] = useState<SelectionSummary | null>(null);
   const [summarizing, setSummarizing] = useState(false);
+  const [timeTravel, setTimeTravel] = useState(false);
+  const [timeline, setTimeline] = useState<GraphTimeline | null>(null);
+  const [asOfYear, setAsOfYear] = useState<number | null>(null);
+  const [delta, setDelta] = useState<GraphDelta | null>(null);
 
+  // Load the full ("now") graph whenever we are not time-traveling.
   useEffect(() => {
+    if (timeTravel) return;
     api.graph(0).then(setData).catch((e) => setError(String(e)));
-  }, []);
+  }, [timeTravel]);
+
+  // Entering time-travel: fetch the year bounds and start at "now".
+  useEffect(() => {
+    if (!timeTravel) {
+      setDelta(null);
+      setAsOfYear(null);
+      return;
+    }
+    api
+      .graphTimeline()
+      .then((tl) => {
+        setTimeline(tl);
+        setAsOfYear(tl.max_year);
+      })
+      .catch((e) => setError(String(e)));
+  }, [timeTravel]);
+
+  // Reconstruct the graph (and "what's new since") at the selected year.
+  useEffect(() => {
+    if (!timeTravel || asOfYear == null) return;
+    api.graphAsOf(asOfYear, 0).then(setData).catch((e) => setError(String(e)));
+    const now = timeline?.max_year ?? asOfYear;
+    if (asOfYear < now) {
+      api.graphDelta(asOfYear).then(setDelta).catch(() => setDelta(null));
+    } else {
+      setDelta(null);
+    }
+  }, [timeTravel, asOfYear, timeline]);
 
   const filtered = useMemo<GraphData>(
     // Keep all nodes visible (even isolated ones) so a sparse corpus still shows.
@@ -77,6 +111,16 @@ export default function GraphPage() {
           >
             {lasso ? "Lasso: on" : "Lasso select"}
           </button>
+          <button
+            className={timeTravel ? "btn-accent" : "btn"}
+            onClick={() => {
+              setTimeTravel((v) => !v);
+              clearSelection();
+            }}
+            title="Replay how the field evolved by publication year"
+          >
+            {timeTravel ? "Time travel: on" : "Time travel"}
+          </button>
           <label className="flex items-center gap-2 text-sm text-muted">
             min weight {minWeight.toFixed(2)}
             <input
@@ -96,6 +140,16 @@ export default function GraphPage() {
         <div className="text-xs text-muted">
           Drag a rectangle over the graph to select papers, then read the cluster brief on the right.
         </div>
+      )}
+      {timeTravel && timeline && timeline.min_year != null && timeline.max_year != null && (
+        <TimeTravelBar
+          timeline={timeline}
+          asOfYear={asOfYear ?? timeline.max_year}
+          isNow={asOfYear == null || asOfYear >= timeline.max_year}
+          nodeCount={filtered.nodes.length}
+          edgeCount={filtered.edges.length}
+          onChange={setAsOfYear}
+        />
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
@@ -130,10 +184,13 @@ export default function GraphPage() {
                 Open paper card
               </Link>
             </div>
+          ) : delta && delta.counts.papers > 0 ? (
+            <DeltaPanel delta={delta} now={timeline?.max_year ?? null} />
           ) : (
             <p className="text-sm text-muted">
-              Click a node to inspect it, or use <span className="text-ink">Lasso select</span> to
-              summarize a cluster.
+              Click a node to inspect it, use <span className="text-ink">Lasso select</span> to
+              summarize a cluster, or <span className="text-ink">Time travel</span> to replay the
+              field&apos;s growth.
             </p>
           )}
         </aside>
@@ -230,6 +287,82 @@ function SelectionPanel({
       {!loading && summary && summary.count === 0 && (
         <p className="text-sm text-muted">No papers in the selected region.</p>
       )}
+    </div>
+  );
+}
+
+function TimeTravelBar({
+  timeline,
+  asOfYear,
+  isNow,
+  nodeCount,
+  edgeCount,
+  onChange,
+}: {
+  timeline: GraphTimeline;
+  asOfYear: number;
+  isNow: boolean;
+  nodeCount: number;
+  edgeCount: number;
+  onChange: (year: number) => void;
+}) {
+  const min = timeline.min_year as number;
+  const max = timeline.max_year as number;
+  const total = timeline.buckets.at(-1)?.papers || 1;
+  const here = timeline.buckets.find((b) => b.year === asOfYear)?.papers ?? nodeCount;
+  return (
+    <div className="card space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <div className="font-semibold text-white">
+          As of {asOfYear}
+          {isNow && <span className="ml-2 chip">now</span>}
+        </div>
+        <div className="text-muted">
+          {nodeCount} papers · {edgeCount} links ·{" "}
+          {Math.round((here / total) * 100)}% of the field had formed
+        </div>
+      </div>
+      <input
+        type="range"
+        className="w-full"
+        min={min}
+        max={max}
+        step={1}
+        value={asOfYear}
+        onChange={(e) => onChange(parseInt(e.target.value, 10))}
+      />
+      <div className="flex justify-between text-xs text-muted">
+        <span>{min}</span>
+        <button className="text-accent hover:underline" onClick={() => onChange(max)}>
+          jump to now
+        </button>
+        <span>{max}</span>
+      </div>
+    </div>
+  );
+}
+
+function DeltaPanel({ delta, now }: { delta: GraphDelta; now: number | null }) {
+  return (
+    <div className="space-y-2">
+      <h2 className="text-sm font-semibold text-white">
+        New since {delta.since_year}
+        {now != null ? `–${now}` : ""}
+      </h2>
+      <div className="flex flex-wrap gap-1">
+        <span className="chip">+{delta.counts.papers} papers</span>
+        <span className="chip">+{delta.counts.edges} links</span>
+      </div>
+      <ul className="space-y-0.5 text-xs">
+        {delta.new_papers.slice(0, 25).map((p) => (
+          <li key={p.paper_id}>
+            <Link href={`/papers/${p.paper_id}`} className="text-accent hover:underline">
+              {p.title}
+            </Link>{" "}
+            <span className="text-muted">{p.year ?? ""}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

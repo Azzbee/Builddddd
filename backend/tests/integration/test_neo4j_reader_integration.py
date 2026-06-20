@@ -74,6 +74,11 @@ async def test_reader_snapshot_and_lineage_and_relations(store) -> None:  # type
     assert {n.id for n in snap.nodes} == {"p1", "p2"}
     assert any(e.source in {"p1", "p2"} and e.target in {"p1", "p2"} for e in snap.edges)
 
+    # Time-travel: as of 2021 only p1 (2020) exists, and the p1<->p2 edge is gone.
+    snap_2021 = await reader.snapshot("rtest", as_of_year=2021)
+    assert {n.id for n in snap_2021.nodes} == {"p1"}
+    assert snap_2021.edges == []
+
     neighbors = await reader.neighbors("rtest", "p1", 0.0)
     assert any(e.target == "p2" or e.source == "p2" for e in neighbors)
 

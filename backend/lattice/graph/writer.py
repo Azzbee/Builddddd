@@ -35,6 +35,7 @@ class GraphWriter:
                 p.s2_paper_id = $s2, p.venue = $venue, p.paper_type = $ptype,
                 p.confidence = $conf, p.needs_review = $needs_review,
                 p.problem_statement = $problem, p.updated_at = $now,
+                p.created_at = coalesce(p.created_at, $now),
                 p.domains = $domains
             """,
             {

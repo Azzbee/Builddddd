@@ -169,6 +169,48 @@ async def test_summarize_selected_papers_brief() -> None:
     assert (await svc.summarize_papers(["does-not-exist"]))["count"] == 0
 
 
+def _doc_year(title: str, methods: str, year: int) -> ParsedDocument:
+    d = _doc(title, methods, ["10.1/shared", f"10.1/{title}"])
+    d.year = year
+    return d
+
+
+async def test_time_travel_snapshot_timeline_and_delta() -> None:
+    docs = {
+        "old.pdf": _doc_year("LSTM copper forecasting", "LSTM attention", 2018),
+        "mid.pdf": _doc_year("GRU copper forecasting", "GRU LSTM", 2020),
+        "new.pdf": _doc_year("Transformer copper forecasting", "transformer attention", 2023),
+    }
+    llm = ScriptedLLM([_content(["LSTM", "attention"]), _content(["GRU"]), _content(["transformer"])])
+    svc = _service(FakeParser(docs), llm, FakeGraphStore())
+    await svc.ingest_pdf("old.pdf", _pdf("O"))
+    await svc.ingest_pdf("mid.pdf", _pdf("M"))
+    await svc.ingest_pdf("new.pdf", _pdf("N"))
+
+    # As of 2019 only the 2018 paper exists.
+    snap_2019 = await svc.graph_snapshot(as_of_year=2019)
+    assert {n.year for n in snap_2019.nodes} == {2018}
+
+    # As of 2021 the 2018 + 2020 papers exist; never the 2023 one.
+    snap_2021 = await svc.graph_snapshot(as_of_year=2021)
+    assert {n.year for n in snap_2021.nodes} == {2018, 2020}
+    assert all(n.year <= 2021 for n in snap_2021.nodes)
+
+    # "Now" includes everything.
+    assert len((await svc.graph_snapshot()).nodes) == 3
+
+    # Timeline reports bounds and cumulative growth.
+    tl = await svc.graph_timeline()
+    assert tl["min_year"] == 2018 and tl["max_year"] == 2023
+    last = tl["buckets"][-1]
+    assert last["year"] == 2023 and last["papers"] == 3
+
+    # Delta from 2019 -> now surfaces the two later papers.
+    d = await svc.graph_delta(2019)
+    assert d["counts"]["papers"] == 2
+    assert {p["year"] for p in d["new_papers"]} == {2020, 2023}
+
+
 async def test_reingest_is_idempotent_duplicate() -> None:
     docs = {"paper_a.pdf": _doc("LSTM copper forecasting", "LSTM", ["10.1/a"])}
     graph = FakeGraphStore()

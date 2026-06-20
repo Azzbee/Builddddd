@@ -12,10 +12,15 @@ async def graph(
     min_weight: float = Query(0.0, ge=0.0, le=1.0),
     year_from: int | None = None,
     year_to: int | None = None,
+    as_of_year: int | None = Query(None, description="Reconstruct the graph as of this publication year"),
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
-    """Nodes + edges for the explorer, filtered by weight and year."""
-    snapshot = await c.ingestion.graph_snapshot()
+    """Nodes + edges for the explorer, filtered by weight and year.
+
+    ``as_of_year`` time-travels: the graph is rebuilt with only papers published up
+    to that year (communities/centrality recomputed on the subgraph).
+    """
+    snapshot = await c.ingestion.graph_snapshot(as_of_year=as_of_year)
     nodes = snapshot.nodes
     edges = snapshot.edges
 
@@ -44,3 +49,19 @@ async def stats(c: Container = Depends(get_container)) -> dict[str, object]:
         "edges": len(snapshot.edges),
         "communities": len(communities),
     }
+
+
+@router.get("/timeline")
+async def timeline(c: Container = Depends(get_container)) -> dict[str, object]:
+    """Publication-year bounds + cumulative growth, for the time-travel slider."""
+    return await c.ingestion.graph_timeline()
+
+
+@router.get("/delta")
+async def delta(
+    since_year: int = Query(..., description="Lower bound (exclusive) on the year axis"),
+    until_year: int | None = Query(None, description="Upper bound; defaults to now"),
+    c: Container = Depends(get_container),
+) -> dict[str, object]:
+    """Papers and edges that entered the field in (since_year, until_year]."""
+    return await c.ingestion.graph_delta(since_year, until_year)

@@ -213,6 +213,22 @@ def test_graph_and_jobs(client: TestClient) -> None:
     assert len(jobs) == 2
 
 
+def test_graph_time_travel_endpoints(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
+    # The fake parser stamps year 2024 on every paper.
+    tl = client.get("/graph/timeline").json()
+    assert tl["min_year"] == 2024 and tl["max_year"] == 2024
+    assert tl["buckets"][-1]["papers"] == 2
+
+    # Before 2024 the graph is empty; at 2024 both papers appear.
+    assert len(client.get("/graph?as_of_year=2023").json()["nodes"]) == 0
+    assert len(client.get("/graph?as_of_year=2024").json()["nodes"]) == 2
+
+    delta = client.get("/graph/delta?since_year=2023").json()
+    assert delta["counts"]["papers"] == 2
+
+
 def test_landscape_matrix(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     r = client.get("/landscape/matrix?row=method&col=dataset")

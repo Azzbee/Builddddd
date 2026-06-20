@@ -30,8 +30,10 @@ an optional `X-Workspace-Id` header (defaults to the configured workspace).
 | POST | `/papers/summarize` | `{ "paper_ids": [...] }` -> grounded brief for a selection (graph lasso) |
 | GET | `/papers/{id}/pdf` | Stream the stored source PDF (inline `application/pdf`) |
 | GET | `/papers/{id}/pdf/meta` | `{ available, pages, size }` for the reader UI |
-| GET | `/graph?min_weight&year_from&year_to` | Nodes + edges for the explorer |
+| GET | `/graph?min_weight&year_from&year_to&as_of_year` | Nodes + edges for the explorer (`as_of_year` time-travels) |
 | GET | `/graph/stats` | Papers / edges / communities |
+| GET | `/graph/timeline` | Publication-year bounds + cumulative growth (slider bounds) |
+| GET | `/graph/delta?since_year&until_year` | Papers + edges that entered the field in (since, until] |
 
 ## Query (agentic RAG)
 | Method | Path | Purpose |

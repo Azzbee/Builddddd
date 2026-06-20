@@ -28,6 +28,13 @@ async def test_snapshot_maps_nodes_and_edges_and_normalizes_centrality() -> None
     assert snap.edges[0].components == {"sem": 0.9, "meth": 0.5}
 
 
+async def test_snapshot_passes_as_of_year_to_cypher() -> None:
+    store = FakeGraphStore({"RETURN p.id AS id": [], "RELATED_TO]->(b:Paper": []})
+    await Neo4jGraphReader(store).snapshot("ws", as_of_year=2020)
+    # Both the node and edge queries are parameterized with the year bound.
+    assert all(params.get("yr") == 2020 for _q, params in store.calls)
+
+
 async def test_neighbors_filters_and_maps() -> None:
     store = FakeGraphStore(
         {"RELATED_TO]-(b:Paper": [{"source": "p1", "target": "p2", "weight": 0.7, "components": None}]}
