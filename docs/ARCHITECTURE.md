@@ -132,6 +132,22 @@ context from the tool trace, and scores each item; abstentions are graded withou
 a model call. Because the judge is an injected `LLMClient`, the whole harness is
 unit-tested offline with a scripted model.
 
+## Gap -> research proposal
+
+`landscape/proposal.py` turns a gap-matrix cell (row facet x column facet) into a
+grounded, deterministic proposal. `build_proposal` is pure over injected
+`FacetPaper`s: it gathers the row's track record and the column's track record
+(the building blocks already in the corpus), names the method to borrow and its
+strongest application, frames novelty via the Empty-vs-Blind-spot global signal,
+times it with per-facet momentum and the corpus's own demand signal, lists
+baselines to beat (the methods already used on the target) and honest risks
+(aggregated flanking limitations + novelty caveats), and scores opportunity
+confidence from building-block strength x demand x momentum. Every referenced
+paper is a real corpus paper, so the proposal is grounded by construction; an LLM
+can polish prose later. `IngestionService.research_opportunities` builds the gap
+matrix, takes the top gaps, and drafts one proposal per cell (reusing the matrix's
+global counts, so no extra network calls), ranked by confidence.
+
 ## Time-travel (graph replay)
 
 `graph_snapshot(as_of_year=Y)` reconstructs the explorer graph as of a publication

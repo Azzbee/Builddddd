@@ -211,6 +211,32 @@ async def test_time_travel_snapshot_timeline_and_delta() -> None:
     assert {p["year"] for p in d["new_papers"]} == {2020, 2023}
 
 
+async def test_research_proposal_and_opportunities() -> None:
+    # lstm used on copper; var used on a different dataset -> lstm x var-dataset is a gap.
+    docs = {
+        "a.pdf": _doc_year("LSTM copper", "LSTM", 2021),
+        "b.pdf": _doc_year("VAR panels", "VAR", 2020),
+    }
+    # Distinct datasets so a real empty cell (lstm x comex gold) exists.
+    llm = ScriptedLLM([
+        _content(["LSTM"]),  # dataset: LME Copper
+        _content(["VAR"]).replace("LME Copper", "COMEX Gold"),
+    ])
+    svc = _service(FakeParser(docs), llm, FakeGraphStore())
+    await svc.ingest_pdf("a.pdf", _pdf("A"))
+    await svc.ingest_pdf("b.pdf", _pdf("B"))
+
+    prop = await svc.research_proposal("method", "dataset", "lstm", "comex gold")
+    assert prop["row"] == "lstm" and prop["col"] == "comex gold"
+    assert prop["state"] in ("gap", "blind_spot")
+    assert "lstm" in prop["thesis"].lower()
+    assert "markdown" in prop and prop["markdown"].startswith("# Research proposal")
+
+    opps = await svc.research_opportunities("method", "dataset", limit=3)
+    assert opps["row_facet"] == "method"
+    assert isinstance(opps["proposals"], list)
+
+
 async def test_reingest_is_idempotent_duplicate() -> None:
     docs = {"paper_a.pdf": _doc("LSTM copper forecasting", "LSTM", ["10.1/a"])}
     graph = FakeGraphStore()

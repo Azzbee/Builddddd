@@ -56,6 +56,7 @@ from lattice.ingestion.models import (
 )
 from lattice.ingestion.pdf_utils import classify_pdf
 from lattice.ingestion.pipeline import IngestionPipeline, PipelineContext
+from lattice.landscape.proposal import FacetPaper, MomentumLite
 
 log = get_logger("ingestion.service")
 
@@ -512,6 +513,149 @@ class IngestionService:
             "known_unknowns": known_unknowns,
             "unknown_knowns": unknown_knowns,
         }
+
+    # ------------------------------------------------------------------ proposals
+    def _facet_papers(
+        self, cards: list[PaperCard], row_facet: str, col_facet: str
+    ) -> list[FacetPaper]:
+        """Project cards onto two facets for the proposal generator."""
+
+        def facet(card: PaperCard, name: str) -> set[str]:
+            if name == "method":
+                return card.normalized_methods
+            if name == "dataset":
+                return card.normalized_datasets
+            if name == "concept":
+                return {d.lower() for d in card.domains}
+            raise ValueError(f"unknown facet: {name}")
+
+        return [
+            FacetPaper(
+                paper_id=card.paper_id,
+                title=card.title,
+                year=card.year,
+                row_values=facet(card, row_facet),
+                col_values=facet(card, col_facet),
+                representative_claim=card.key_results[0].claim if card.key_results else None,
+                limitations=list(card.limitations),
+            )
+            for card in cards
+        ]
+
+    def _facet_momentum(self, cards: list[PaperCard], facet: str, value: str) -> MomentumLite:
+        """MomentumLite for papers whose ``facet`` includes ``value``."""
+        from lattice.landscape.momentum import momentum_score
+
+        def has(card: PaperCard) -> bool:
+            if facet == "method":
+                return value in card.normalized_methods
+            if facet == "dataset":
+                return value in card.normalized_datasets
+            return value in {d.lower() for d in card.domains}
+
+        counts: dict[int, int] = {}
+        for card in cards:
+            if card.year is not None and has(card):
+                counts[card.year] = counts.get(card.year, 0) + 1
+        m = momentum_score(value, counts)
+        return MomentumLite(maturity=str(m.maturity), composite=m.composite, burst=m.burst)
+
+    def _open_problems_for(self, cards: list[PaperCard], row: str, col: str) -> list[str]:
+        """Corpus future-work lines that mention either side of the cell."""
+        terms = {t for t in (row.lower(), col.lower()) if t}
+        out: list[str] = []
+        seen: set[str] = set()
+        for card in cards:
+            for fw in card.future_work:
+                low = fw.lower()
+                if any(t in low for t in terms):
+                    key = fw.strip().lower()
+                    if key and key not in seen:
+                        seen.add(key)
+                        out.append(fw.strip())
+        return out[:6]
+
+    async def research_proposal(
+        self,
+        row_facet: str,
+        col_facet: str,
+        row: str,
+        col: str,
+        *,
+        global_count: int = 0,
+    ) -> dict[str, object]:
+        """Generate a grounded research proposal for one gap-matrix cell."""
+        from lattice.landscape.proposal import build_proposal
+        from lattice.landscape.signals import DemandScorer
+
+        cards = await self.cards.all_cards()
+        row, col = row.lower(), col.lower()
+        papers = self._facet_papers(cards, row_facet, col_facet)
+        demand = DemandScorer.from_cards(self.chunk_embedder, cards).score(row, col)
+        proposal = build_proposal(
+            row_facet,
+            col_facet,
+            row,
+            col,
+            papers,
+            now_year=datetime.now(UTC).year,
+            global_count=global_count,
+            demand=demand,
+            row_momentum=self._facet_momentum(cards, row_facet, row),
+            col_momentum=self._facet_momentum(cards, col_facet, col),
+            open_problems=self._open_problems_for(cards, row, col),
+        )
+        return proposal.to_json()
+
+    async def research_opportunities(
+        self,
+        row_facet: str,
+        col_facet: str,
+        *,
+        limit: int = 5,
+        global_counts: dict[tuple[str, str], int] | None = None,
+    ) -> dict[str, object]:
+        """Rank the corpus's top gaps and draft a full proposal for each.
+
+        Builds the gap matrix, takes the highest-pressure empty/blind-spot cells,
+        and generates a grounded proposal per cell (reusing any global counts the
+        matrix already fetched, so this costs no extra network calls).
+        """
+        from lattice.landscape.matrix import PaperFacets, build_gap_matrix, top_gaps
+        from lattice.landscape.signals import DemandScorer
+
+        cards = await self.cards.all_cards()
+        global_counts = global_counts or {}
+        now_year = datetime.now(UTC).year
+        facets = [
+            PaperFacets(
+                paper_id=c.paper_id,
+                year=c.year,
+                methods=c.normalized_methods,
+                datasets=c.normalized_datasets,
+                concepts={d.lower() for d in c.domains},
+            )
+            for c in cards
+        ]
+        demand = DemandScorer.from_cards(self.chunk_embedder, cards)
+        cells = build_gap_matrix(
+            facets,
+            row_facet,
+            col_facet,
+            now_year=now_year,
+            global_count_fn=lambda r, cv: global_counts.get((r, cv), 0),
+            demand_fn=demand.score,
+        )
+        proposals = []
+        for cell in top_gaps(cells, limit=limit):
+            proposals.append(
+                await self.research_proposal(
+                    row_facet, col_facet, cell.row, cell.col, global_count=cell.global_count
+                )
+            )
+        # Strongest opportunities first by the proposal's own confidence.
+        proposals.sort(key=lambda p: float(p["confidence"]), reverse=True)  # type: ignore[arg-type]
+        return {"row_facet": row_facet, "col_facet": col_facet, "proposals": proposals}
 
     # ------------------------------------------------------------------ related work / export
     async def _cards_by_community(self) -> dict[str, list[PaperCard]]:

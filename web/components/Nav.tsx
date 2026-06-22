@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/chat", label: "Chat" },
   { href: "/ingest", label: "Ingest" },
   { href: "/landscape", label: "Landscape" },
+  { href: "/opportunities", label: "Opportunities" },
   { href: "/quadrants", label: "Quadrants" },
   { href: "/contradictions", label: "Contradictions" },
   { href: "/lineage", label: "Lineage" },

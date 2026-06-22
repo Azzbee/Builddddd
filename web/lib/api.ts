@@ -8,6 +8,7 @@ import type {
   PaperCard,
   PaperSummary,
   PdfMeta,
+  ResearchProposal,
   SelectionSummary,
 } from "./types";
 import { getWorkspace } from "./workspace";
@@ -66,6 +67,15 @@ export const api = {
       `/landscape/matrix?row=${row}&col=${col}`,
     ),
   momentum: () => get<{ movers: Record<string, unknown>[] }>("/landscape/momentum"),
+  opportunities: (rowFacet = "method", colFacet = "dataset", limit = 6, useGlobal = true) =>
+    get<{ row_facet: string; col_facet: string; proposals: ResearchProposal[] }>(
+      `/landscape/opportunities?row_facet=${rowFacet}&col_facet=${colFacet}&limit=${limit}&use_global=${useGlobal}`,
+    ),
+  proposal: (row: string, col: string, rowFacet = "method", colFacet = "dataset", useGlobal = true) =>
+    get<ResearchProposal>(
+      `/landscape/proposal?row=${encodeURIComponent(row)}&col=${encodeURIComponent(col)}` +
+        `&row_facet=${rowFacet}&col_facet=${colFacet}&use_global=${useGlobal}`,
+    ),
   quadrants: () =>
     get<{
       known_knowns: Record<string, unknown>[];

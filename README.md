@@ -157,6 +157,11 @@ Three more capabilities round out the experience:
     the graph is reconstructed as of any year (communities + centrality recomputed on
     that subgraph), with a "what's new since" delta of papers and links that arrived
     after. The living graph, rewound.
+13. **Gap -> research-proposal generator** - turns the corpus's highest-pressure gaps
+    into grounded proposals: the thesis, the building blocks already in your library
+    (each cited), the method to borrow and where from, why now (momentum + demand),
+    baselines to beat, and honest risks - with the Empty-vs-Blind-spot novelty call.
+    The "what should I work on next" payoff.
 
 ## Status
 
@@ -164,7 +169,7 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 295+ tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
+- Backend: 300+ tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
 - The production datastore code is verified **live in CI**: a dedicated job spins up
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,

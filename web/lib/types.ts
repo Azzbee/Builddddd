@@ -154,6 +154,37 @@ export interface MatrixCell {
   components: { feasibility: number; adjacency_pressure: number; demand_signal: number };
 }
 
+export interface ProposalEvidence {
+  paper_id: string;
+  title: string;
+  year: number | null;
+  note: string;
+}
+
+export interface ResearchProposal {
+  row_facet: string;
+  col_facet: string;
+  row: string;
+  col: string;
+  state: string;
+  novelty: string;
+  gap_score: number;
+  components: Record<string, number>;
+  global_count: number;
+  demand: number;
+  thesis: string;
+  why_now: string;
+  row_track_record: ProposalEvidence[];
+  col_track_record: ProposalEvidence[];
+  method_to_borrow: ProposalEvidence | null;
+  recommended_baselines: string[];
+  prior_art: ProposalEvidence[];
+  risks: string[];
+  open_problems: string[];
+  confidence: number;
+  markdown: string;
+}
+
 export interface IngestJob {
   job_id: string;
   paper_id: string | null;

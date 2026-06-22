@@ -81,6 +81,66 @@ async def matrix(
     }
 
 
+async def _empty_cell_global_counts(
+    c: Container, facets: list[PaperFacets], row: str, col: str
+) -> dict[tuple[str, str], int]:
+    rows = sorted({v for f in facets for v in f.facet(row)})
+    cols = sorted({v for f in facets for v in f.facet(col)})
+    populated = {(r, cv) for f in facets for r in f.facet(row) for cv in f.facet(col)}
+    empties = [(r, cv) for r in rows for cv in cols if (r, cv) not in populated]
+    if not empties:
+        return {}
+    try:
+        return await fetch_global_counts(OpenAlexClient(c.settings.enrichment), empties)
+    except Exception:
+        return {}
+
+
+@router.get("/proposal")
+async def proposal(
+    row: str = Query(..., description="row facet value, e.g. a method"),
+    col: str = Query(..., description="col facet value, e.g. a dataset"),
+    row_facet: str = Query("method"),
+    col_facet: str = Query("dataset"),
+    use_global: bool = Query(True, description="Query OpenAlex for the Empty vs Blind-spot signal"),
+    c: Container = Depends(get_container),
+) -> dict[str, object]:
+    """Generate a grounded research proposal for one (row, col) gap cell."""
+    if row_facet not in _FACETS or col_facet not in _FACETS:
+        return {"error": f"facets must be in {sorted(_FACETS)}"}
+    global_count = 0
+    if use_global:
+        try:
+            counts = await fetch_global_counts(
+                OpenAlexClient(c.settings.enrichment), [(row.lower(), col.lower())]
+            )
+            global_count = counts.get((row.lower(), col.lower()), 0)
+        except Exception:
+            global_count = 0
+    return await c.ingestion.research_proposal(
+        row_facet, col_facet, row, col, global_count=global_count
+    )
+
+
+@router.get("/opportunities")
+async def opportunities(
+    row_facet: str = Query("method"),
+    col_facet: str = Query("dataset"),
+    limit: int = Query(5, ge=1, le=20),
+    use_global: bool = Query(True, description="Query OpenAlex for the Empty vs Blind-spot signal"),
+    c: Container = Depends(get_container),
+) -> dict[str, object]:
+    """Rank the corpus's top gaps and draft a full proposal for each."""
+    if row_facet not in _FACETS or col_facet not in _FACETS:
+        return {"error": f"facets must be in {sorted(_FACETS)}"}
+    global_counts: dict[tuple[str, str], int] = {}
+    if use_global:
+        global_counts = await _empty_cell_global_counts(c, await _facets(c), row_facet, col_facet)
+    return await c.ingestion.research_opportunities(
+        row_facet, col_facet, limit=limit, global_counts=global_counts
+    )
+
+
 @router.get("/momentum")
 async def momentum(c: Container = Depends(get_container)) -> dict[str, object]:
     """Concept momentum from local corpus ingest years (global via OpenAlex in prod)."""

@@ -238,6 +238,20 @@ def test_landscape_matrix(client: TestClient) -> None:
     assert any(cell["row"] == "lstm" for cell in body["cells"])
 
 
+def test_landscape_proposal_and_opportunities(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    # use_global=false keeps it offline (no OpenAlex).
+    r = client.get("/landscape/proposal?row=lstm&col=comex%20gold&use_global=false")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["row"] == "lstm" and body["col"] == "comex gold"
+    assert body["markdown"].startswith("# Research proposal")
+
+    opp = client.get("/landscape/opportunities?row_facet=method&col_facet=dataset&use_global=false")
+    assert opp.status_code == 200
+    assert "proposals" in opp.json()
+
+
 def test_query_non_stream(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     r = client.post("/query", json={"question": "What is unknown?"})

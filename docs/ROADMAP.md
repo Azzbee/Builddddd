@@ -55,6 +55,7 @@ Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
 | 10. Source-PDF storage + in-app reader + citation page deep-linking | Done | `db/blobs.py`, `/papers/{id}/pdf`, `web/app/papers/[id]` |
 | 11. Lasso-select-to-summarize in the explorer | Done | `IngestionService.summarize_papers`, `/papers/summarize`, `web/components/GraphExplorer.tsx` |
 | 12. Time-travel graph replay (as-of-year snapshot + delta) | Done | `IngestionService.graph_snapshot/timeline/delta`, `/graph?as_of_year`, `/graph/timeline`, `/graph/delta` |
+| 13. Gap -> research-proposal generator | Done | `landscape/proposal.py`, `IngestionService.research_proposal/research_opportunities`, `/landscape/proposal`, `/landscape/opportunities`, `web/app/opportunities` |
 
 ## Production verification
 

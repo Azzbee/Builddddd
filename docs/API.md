@@ -45,6 +45,8 @@ an optional `X-Workspace-Id` header (defaults to the configured workspace).
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/landscape/matrix?row&col&use_global` | Gap matrix (cell states + top gaps) |
+| GET | `/landscape/opportunities?row_facet&col_facet&limit&use_global` | Top gaps, each as a grounded research proposal |
+| GET | `/landscape/proposal?row&col&row_facet&col_facet&use_global` | Research proposal for one specific cell |
 | GET | `/landscape/momentum` | Concept momentum scorecards |
 | GET | `/landscape/quadrants` | Known knowns / known unknowns / unknown knowns |
 
