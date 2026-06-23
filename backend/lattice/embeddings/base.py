@@ -73,12 +73,37 @@ class SentenceTransformerEmbedder:  # pragma: no cover - requires torch/model do
         from sentence_transformers import SentenceTransformer
 
         self._model = SentenceTransformer(model_name)
-        self._dim = dim
+        # Trust the model's true dimension over the configured one.
+        actual = self._model.get_sentence_embedding_dimension()
+        self._dim = int(actual) if actual else dim
 
     @property
     def dim(self) -> int:
         return self._dim
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
         vecs = self._model.encode(texts, normalize_embeddings=True)
         return [v.tolist() for v in vecs]
+
+
+def make_text_embedder(model_name: str, dim: int, *, prefer_local: bool) -> TextEmbedder:
+    """Build a real local embedder when asked, else the hashing fallback.
+
+    Loading a sentence-transformers model needs torch + a (cached) model download,
+    so it is opt-in. Any failure to load degrades to :class:`HashingEmbedder` with a
+    warning rather than crashing - the system always boots.
+    """
+    if not prefer_local:
+        return HashingEmbedder(dim=dim)
+    from lattice.core.logging import get_logger
+
+    log = get_logger("embeddings")
+    try:
+        emb = SentenceTransformerEmbedder(model_name, dim)
+        log.info("embeddings.local_loaded", model=model_name, dim=emb.dim)
+        return emb
+    except Exception as exc:  # pragma: no cover - exercised only when torch/model present
+        log.warning("embeddings.local_unavailable", model=model_name, error=str(exc))
+        return HashingEmbedder(dim=dim)

@@ -19,7 +19,78 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from lattice.core.hashing import normalize_text
 from lattice.graph.similarity import cosine
+
+# --------------------------------------------------------------------------- claim clustering
+_CLAIM_STOP = {
+    "the", "a", "an", "of", "for", "on", "in", "with", "to", "and", "or", "is",
+    "are", "than", "over", "versus", "vs", "that", "this", "these", "show", "shows",
+    "showed", "we", "our", "it", "its", "by", "at", "as", "be", "can", "using",
+    "significantly", "results", "result", "improvement", "improvements",
+}
+
+
+def _claim_tokens(text: str) -> set[str]:
+    """Content tokens for fuzzy claim matching: stopworded, de-pluralized, len>=3."""
+    toks: set[str] = set()
+    for raw in normalize_text(text).split():
+        if len(raw) < 3 or raw in _CLAIM_STOP:
+            continue
+        toks.add(raw[:-1] if raw.endswith("s") and len(raw) > 3 else raw)
+    return toks
+
+
+@dataclass
+class ClaimCluster:
+    canonical: str
+    members: list[str]
+    papers: list[SupportingPaper]
+    polarity: int = 1
+
+
+def cluster_claims(
+    items: list[tuple[str, SupportingPaper]], *, threshold: float = 0.5
+) -> list[ClaimCluster]:
+    """Greedily cluster claims that state the same finding in different words.
+
+    Uses the overlap coefficient |A n B| / min(|A|, |B|) on content tokens, which is
+    robust to differing verbosity (e.g. "LSTM significantly improves accuracy over
+    ARIMA" vs "GRU improves forecasting accuracy versus ARIMA"). Exact-text grouping
+    misses these and reports zero established findings on real corpora. Claims of
+    opposite polarity never merge, so "X improves Y" and "X does not improve Y" stay
+    in separate clusters rather than being conflated.
+    """
+    from lattice.graph.contradictions import claim_polarity
+
+    clusters: list[tuple[set[str], ClaimCluster]] = []
+    for claim, sp in items:
+        toks = _claim_tokens(claim)
+        if not toks:
+            continue
+        pol = claim_polarity(claim) or 1  # treat neutral as positive for grouping
+        best: tuple[set[str], ClaimCluster] | None = None
+        best_sim = 0.0
+        for ctoks, cl in clusters:
+            if cl.polarity != pol:
+                continue  # never merge a claim with its negation
+            inter = len(toks & ctoks)
+            sim = inter / min(len(toks), len(ctoks)) if inter else 0.0
+            if sim > best_sim:
+                best_sim, best = sim, (ctoks, cl)
+        if best is not None and best_sim >= threshold:
+            ctoks, cl = best
+            ctoks |= toks
+            cl.members.append(claim)
+            cl.papers.append(sp)
+            # Keep the most descriptive (longest) claim as the canonical label.
+            if len(claim) > len(cl.canonical):
+                cl.canonical = claim
+        else:
+            clusters.append(
+                (set(toks), ClaimCluster(canonical=claim, members=[claim], papers=[sp], polarity=pol))
+            )
+    return [cl for _toks, cl in clusters]
 
 
 # --------------------------------------------------------------------------- known knowns

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 import pytest
-from lattice.embeddings.base import HashingEmbedder, l2_normalize
+from lattice.embeddings.base import HashingEmbedder, l2_normalize, make_text_embedder
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder, aspect_texts
 from lattice.embeddings.specter2 import Specter2Embedder, specter_input
 from lattice.extraction.schemas import Methodology, PaperCard, Result
@@ -12,6 +12,26 @@ from lattice.ingestion.chunker import Chunk
 
 def _norm(v: list[float]) -> float:
     return math.sqrt(sum(x * x for x in v))
+
+
+def test_make_text_embedder_hashing_when_not_local() -> None:
+    emb = make_text_embedder("BAAI/bge-m3", 1024, prefer_local=False)
+    assert isinstance(emb, HashingEmbedder)
+    assert emb.dim == 1024
+
+
+def test_make_text_embedder_empty_input() -> None:
+    assert make_text_embedder("x", 64, prefer_local=False).embed([]) == []
+
+
+def test_container_uses_hashing_offline() -> None:
+    # In dev/demo/test the container must resolve to the hashing backend so the
+    # suite stays offline (no torch/model download).
+    from lattice.api.deps import build_container
+    from lattice.config import Settings
+
+    c = build_container(Settings(environment="dev"))
+    assert type(c.chunk_embedder._backend).__name__ == "HashingEmbedder"
 
 
 def test_hashing_embedder_deterministic_and_normalized() -> None:

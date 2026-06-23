@@ -24,7 +24,9 @@ from lattice.db.aux_stores import (
 from lattice.db.blobs import BlobStore, InMemoryBlobStore
 from lattice.db.cards import CorpusStore, InMemoryCardStore, InMemoryJobStore, JobStore
 from lattice.db.vector import InMemoryVectorStore, VectorStore
-from lattice.embeddings.chunks import ChunkEmbedder
+from lattice.embeddings.base import make_text_embedder
+from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
+from lattice.embeddings.specter2 import Specter2Embedder
 from lattice.graph.store import FakeGraphStore, GraphStore
 from lattice.ingestion.grobid_client import GrobidClient
 from lattice.ingestion.service import IngestionService, Parser
@@ -68,7 +70,22 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
     if workspace_id is not None and workspace_id != settings.workspace_id:
         settings = settings.model_copy(update={"workspace_id": workspace_id})
     ws = settings.workspace_id
-    chunk_embedder = ChunkEmbedder(dim=settings.embedding.chunk_dim)
+
+    # Resolve the embedding backend: real local models in prod (with safe fallback),
+    # the hashing fallback in demo/dev/test so the suite stays offline and fast.
+    emb = settings.embedding
+    prefer_local = emb.backend == "local" or (
+        emb.backend == "auto" and settings.environment == "prod" and not settings.demo_mode
+    )
+    chunk_backend = make_text_embedder(emb.chunk_st_model, emb.chunk_dim, prefer_local=prefer_local)
+    paper_backend = (
+        make_text_embedder(emb.paper_st_model, emb.paper_dim, prefer_local=prefer_local)
+        if prefer_local
+        else None
+    )
+    chunk_embedder = ChunkEmbedder(backend=chunk_backend, dim=chunk_backend.dim)
+    aspect_embedder = AspectEmbedder(backend=chunk_backend, dim=chunk_backend.dim)
+    specter = Specter2Embedder(local_backend=paper_backend, dim=emb.paper_dim)
 
     vectors: VectorStore
     cards: CorpusStore
@@ -133,7 +150,9 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         graph=graph,
         reader=reader,
         enricher=enricher,
+        specter=specter,
         chunk_embedder=chunk_embedder,
+        aspect_embedder=aspect_embedder,
         text_extractor=text_extractor,
     )
     return Container(

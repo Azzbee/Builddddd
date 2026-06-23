@@ -52,6 +52,21 @@ graph.
 - **GROBID + Docling region router.** GROBID is the backbone for structure and
   references; Docling specializes in its weaknesses (tables, layout); a vision LLM
   arbitrates low-confidence regions. See PRD section 2.1.
+- **Embedding backend.** `make_text_embedder` resolves to real
+  `sentence-transformers` (bge-m3 for chunks, allenai-specter for papers) when
+  `embedding.backend` is `local`, or `auto` in production; demo/dev/test use the
+  deterministic `HashingEmbedder` so CI stays offline. A failed model load degrades
+  to hashing with a warning rather than crashing. Set `LATTICE_EMBEDDING__BACKEND`.
+- **In-memory communities.** The offline explorer path detects communities by
+  weighted greedy modularity (`graph/community.py`), not connected components, so a
+  connected graph still resolves into real sub-communities. The persistent path uses
+  Neo4j GDS Louvain. Cross-community claim clustering is polarity-aware (a claim and
+  its negation never merge), and the heuristic NLI requires genuine subject overlap
+  (0.5) before a polarity clash counts as a contradiction - both prevent the
+  false-positive contradictions that otherwise suppress known-knowns.
+- **Best-effort signals are time-boxed.** The OpenAlex global-gap signal runs under a
+  hard `GLOBAL_SIGNAL_BUDGET_S` wall-clock budget, so a slow/unreachable API degrades
+  to "no global signal" instead of hanging the request.
 - **Three-layer embeddings.** SPECTER2 for citation-informed paper similarity
   (precomputed via S2 where possible); per-aspect embeddings of LLM-distilled
   PaperCard fields to sidestep SPECTER2's domain bias and feed `S_meth`; chunk

@@ -422,6 +422,7 @@ class IngestionService:
         from lattice.landscape.quadrants import (
             OpenProblemMention,
             SupportingPaper,
+            cluster_claims,
             cluster_open_problems,
             consolidate_known_knowns,
             cross_community_transfer,
@@ -430,31 +431,44 @@ class IngestionService:
         cards = await self.cards.all_cards()
         now_year = datetime.now(UTC).year
 
-        # Known knowns: group identical claims across papers.
+        # Known knowns: fuzzily cluster claims that state the same finding (exact-text
+        # grouping reports zero on real corpora), then keep the independently
+        # supported, non-contradicted ones.
         from lattice.core.hashing import normalize_text
 
-        grouped: dict[str, list[SupportingPaper]] = {}
-        canonical: dict[str, str] = {}
+        items: list[tuple[str, SupportingPaper]] = []
         for card in cards:
             authors = frozenset(a.normalized_name for a in card.authors)
             method = card.methods_taxonomy[0] if card.methods_taxonomy else None
             dataset = card.datasets[0].name if card.datasets else None
             for r in card.key_results:
-                key = normalize_text(r.claim)
-                if not key:
-                    continue
-                canonical.setdefault(key, r.claim)
-                grouped.setdefault(key, []).append(
-                    SupportingPaper(card.paper_id, authors, method, dataset, card.year)
-                )
+                if r.claim.strip():
+                    items.append(
+                        (r.claim, SupportingPaper(card.paper_id, authors, method, dataset, card.year))
+                    )
+        claim_clusters = cluster_claims(items)
         contradictions = await self.get_claim_relations("CONTRADICTS")
-        contradicted = {normalize_text(e.source_text) for e in contradictions} | {
+        contra_norm = {normalize_text(e.source_text) for e in contradictions} | {
             normalize_text(e.target_text) for e in contradictions
         }
-        findings = consolidate_known_knowns(grouped, contradicted)
+        # Drop the contradicted *members* of each cluster (a single contested claim
+        # should not nuke an otherwise-converged finding), then keep clusters that
+        # still have independent support.
+        grouped: dict[str, list[SupportingPaper]] = {}
+        for cl in claim_clusters:
+            survivors = [
+                (m, p)
+                for m, p in zip(cl.members, cl.papers, strict=True)
+                if normalize_text(m) not in contra_norm
+            ]
+            if not survivors:
+                continue
+            canonical = max((m for m, _ in survivors), key=len)
+            grouped[canonical] = [p for _, p in survivors]
+        findings = consolidate_known_knowns(grouped)
         known_knowns = [
             {
-                "claim": canonical.get(normalize_text(f.claim), f.claim),
+                "claim": f.claim,
                 "independent_supports": f.independent_supports,
                 "triangulated": f.triangulated,
                 "latest_year": f.latest_year,
@@ -930,8 +944,8 @@ class IngestionService:
     async def graph_snapshot(self, as_of_year: int | None = None) -> GraphSnapshot:
         """Nodes + edges for the explorer, with quick community + centrality.
 
-        Uses union-find communities and weighted-degree centrality so the demo
-        graph is meaningful without a Neo4j GDS run. Production reads precomputed
+        Uses greedy-modularity communities and weighted-degree centrality so the
+        demo graph is meaningful without a Neo4j GDS run. Production reads precomputed
         PageRank/Louvain from the graph store via the injected reader.
 
         When ``as_of_year`` is set, the graph is reconstructed *as of* that year:
@@ -965,25 +979,14 @@ class IngestionService:
                         components={k: round(v, 4) for k, v in e.result.components.items()},
                     )
 
-        # Union-find communities.
-        parent: dict[str, str] = {pid: pid for pid in cards}
+        # Real communities via greedy modularity (not connected components, which
+        # collapse a connected graph into one blob). Persistent path uses Neo4j GDS.
+        from lattice.graph.community import greedy_modularity_communities
 
-        def find(x: str) -> str:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        for edge in undirected.values():
-            ra, rb = find(edge.source), find(edge.target)
-            if ra != rb:
-                parent[ra] = rb
-
-        labels: dict[str, int] = {}
-        community_ids: dict[str, int] = {}
-        for pid in cards:
-            root = find(pid)
-            community_ids[pid] = labels.setdefault(root, len(labels))
+        community_ids = greedy_modularity_communities(
+            list(cards.keys()),
+            [(e.source, e.target, e.weight) for e in undirected.values()],
+        )
 
         degree: dict[str, float] = dict.fromkeys(cards, 0.0)
         for edge in undirected.values():

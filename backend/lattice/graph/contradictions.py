@@ -112,6 +112,12 @@ def _content_tokens(text: str) -> set[str]:
     return {t for t in toks if t not in _STOP and t not in _POSITIVE and t not in _NEGATIVE and t not in _NEGATORS}
 
 
+def claim_polarity(text: str) -> int:
+    """Public alias: +1 asserts an effect, -1 negates it, 0 neutral. Used by the
+    quadrant claim-clustering to avoid merging a claim with its negation."""
+    return _polarity(text)
+
+
 def _polarity(text: str) -> int:
     """Return +1 (asserts an effect), -1 (negates/null effect), or 0 (neutral)."""
     norm = normalize_text(text)
@@ -140,9 +146,15 @@ def _subject_overlap(a: str, b: str) -> float:
 
 
 class HeuristicNLIJudge:
-    """Deterministic NLI via subject overlap + polarity. Offline, fast, explainable."""
+    """Deterministic NLI via subject overlap + polarity. Offline, fast, explainable.
 
-    def __init__(self, subject_threshold: float = 0.34) -> None:
+    ``subject_threshold`` of 0.5 requires the two claims to genuinely share their
+    subject before a polarity clash counts as a contradiction; lower values produce
+    false positives (e.g. "LSTM beats ARIMA" vs "transformers don't beat LSTM" share
+    only generic tokens) that then suppress legitimate known-knowns downstream.
+    """
+
+    def __init__(self, subject_threshold: float = 0.5) -> None:
         self._threshold = subject_threshold
 
     async def judge(self, a: str, b: str) -> tuple[ClaimRelation, float]:

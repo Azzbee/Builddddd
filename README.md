@@ -169,7 +169,10 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 300+ tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
+- Backend: 318 tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
+- Embeddings: real `sentence-transformers` (bge-m3 + SPECTER) wire in automatically in
+  prod (`LATTICE_ENVIRONMENT=prod`) or via `LATTICE_EMBEDDING__BACKEND=local`; the
+  hashing fallback keeps demo/dev/CI offline and fast. Load failures degrade, never crash.
 - The production datastore code is verified **live in CI**: a dedicated job spins up
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,

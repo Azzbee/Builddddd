@@ -37,6 +37,18 @@ async def test_heuristic_detects_support() -> None:
     assert rel == ClaimRelation.SUPPORTS
 
 
+async def test_heuristic_no_false_contradiction_on_generic_overlap() -> None:
+    # Different comparisons that merely share generic tokens (forecasting/accuracy/
+    # lstm) must NOT be called a contradiction - this false positive used to suppress
+    # legitimate known-knowns downstream.
+    judge = HeuristicNLIJudge()
+    rel, _ = await judge.judge(
+        "LSTM with attention significantly improves forecasting accuracy over ARIMA",
+        "Transformers show no significant improvement in forecasting accuracy over LSTM baselines",
+    )
+    assert rel == ClaimRelation.UNRELATED
+
+
 async def test_heuristic_unrelated_when_different_subject() -> None:
     judge = HeuristicNLIJudge()
     rel, _ = await judge.judge(

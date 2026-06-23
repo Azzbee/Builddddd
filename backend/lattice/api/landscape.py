@@ -1,18 +1,40 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 
 from lattice.api.deps import Container, get_container, require_auth
+from lattice.core.logging import get_logger
 from lattice.enrichment.openalex import OpenAlexClient
 from lattice.landscape.matrix import PaperFacets, build_gap_matrix, top_gaps
 from lattice.landscape.momentum import momentum_score
 from lattice.landscape.signals import DemandScorer, fetch_global_counts
 
 router = APIRouter(prefix="/landscape", tags=["landscape"], dependencies=[Depends(require_auth)])
+log = get_logger("api.landscape")
 
 _FACETS = {"method", "dataset", "concept"}
+#: Hard wall-clock budget for the (best-effort) OpenAlex global signal, so a slow
+#: or unreachable API can never hang a landscape request. Degrades to no signal.
+GLOBAL_SIGNAL_BUDGET_S = 6.0
+
+
+async def _global_counts(
+    c: Container, cells: list[tuple[str, str]]
+) -> dict[tuple[str, str], int]:
+    """Fetch OpenAlex counts for ``cells`` under a strict time budget; {} on miss."""
+    if not cells:
+        return {}
+    try:
+        return await asyncio.wait_for(
+            fetch_global_counts(OpenAlexClient(c.settings.enrichment), cells),
+            timeout=GLOBAL_SIGNAL_BUDGET_S,
+        )
+    except (TimeoutError, Exception) as exc:  # best-effort: never block the request
+        log.warning("landscape.global_signal_skipped", error=str(exc))
+        return {}
 
 
 async def _facets(c: Container) -> list[PaperFacets]:
@@ -56,13 +78,7 @@ async def matrix(
     }
     empties = [(r, cv) for r in rows for cv in cols if (r, cv) not in populated]
 
-    global_counts: dict[tuple[str, str], int] = {}
-    if use_global and empties:
-        try:
-            openalex = OpenAlexClient(c.settings.enrichment)
-            global_counts = await fetch_global_counts(openalex, empties)
-        except Exception:
-            global_counts = {}
+    global_counts = await _global_counts(c, empties) if use_global else {}
 
     cells = build_gap_matrix(
         facets,
@@ -88,12 +104,7 @@ async def _empty_cell_global_counts(
     cols = sorted({v for f in facets for v in f.facet(col)})
     populated = {(r, cv) for f in facets for r in f.facet(row) for cv in f.facet(col)}
     empties = [(r, cv) for r in rows for cv in cols if (r, cv) not in populated]
-    if not empties:
-        return {}
-    try:
-        return await fetch_global_counts(OpenAlexClient(c.settings.enrichment), empties)
-    except Exception:
-        return {}
+    return await _global_counts(c, empties)
 
 
 @router.get("/proposal")
@@ -102,7 +113,7 @@ async def proposal(
     col: str = Query(..., description="col facet value, e.g. a dataset"),
     row_facet: str = Query("method"),
     col_facet: str = Query("dataset"),
-    use_global: bool = Query(True, description="Query OpenAlex for the Empty vs Blind-spot signal"),
+    use_global: bool = Query(False, description="Query OpenAlex for the Empty vs Blind-spot signal"),
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
     """Generate a grounded research proposal for one (row, col) gap cell."""
@@ -110,13 +121,8 @@ async def proposal(
         return {"error": f"facets must be in {sorted(_FACETS)}"}
     global_count = 0
     if use_global:
-        try:
-            counts = await fetch_global_counts(
-                OpenAlexClient(c.settings.enrichment), [(row.lower(), col.lower())]
-            )
-            global_count = counts.get((row.lower(), col.lower()), 0)
-        except Exception:
-            global_count = 0
+        counts = await _global_counts(c, [(row.lower(), col.lower())])
+        global_count = counts.get((row.lower(), col.lower()), 0)
     return await c.ingestion.research_proposal(
         row_facet, col_facet, row, col, global_count=global_count
     )
@@ -127,7 +133,7 @@ async def opportunities(
     row_facet: str = Query("method"),
     col_facet: str = Query("dataset"),
     limit: int = Query(5, ge=1, le=20),
-    use_global: bool = Query(True, description="Query OpenAlex for the Empty vs Blind-spot signal"),
+    use_global: bool = Query(False, description="Query OpenAlex for the Empty vs Blind-spot signal"),
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
     """Rank the corpus's top gaps and draft a full proposal for each."""

@@ -66,6 +66,13 @@ class EmbeddingSettings(BaseSettings):
     chunk_dim: int = 1024
     prefer_s2_precomputed: bool = True  # use Semantic Scholar SPECTER2 if available
     batch_size: int = 16
+    #: How to embed. "auto" -> real local models in prod, hashing in demo/dev/test;
+    #: "local" forces real sentence-transformers anywhere; "hashing" forces the
+    #: dependency-free fallback. Local load failures degrade to hashing, never crash.
+    backend: Literal["auto", "local", "hashing"] = "auto"
+    #: sentence-transformers model ids used when the backend resolves to local.
+    chunk_st_model: str = "BAAI/bge-m3"  # 1024-dim, matches chunk_dim
+    paper_st_model: str = "sentence-transformers/allenai-specter"  # 768-dim, matches paper_dim
 
 
 class GrobidSettings(BaseSettings):

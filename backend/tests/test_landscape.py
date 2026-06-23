@@ -17,6 +17,7 @@ from lattice.landscape.momentum import (
 from lattice.landscape.quadrants import (
     OpenProblemMention,
     SupportingPaper,
+    cluster_claims,
     cluster_open_problems,
     consolidate_known_knowns,
     cross_community_transfer,
@@ -110,6 +111,54 @@ def test_gap_score_ranks_pressured_demanded_cells() -> None:
     gaps = top_gaps(cells)
     assert gaps and gaps[0].row == "LSTM" and gaps[0].col == "COMEX"
     assert gaps[0].gap_score > 0
+
+
+# --------------------------------------------------------------------------- claim clustering
+def test_cluster_claims_groups_paraphrases() -> None:
+    items = [
+        ("LSTM with attention significantly improves forecasting accuracy over ARIMA",
+         SupportingPaper("p1", frozenset({"doe"}), method="LSTM", year=2019)),
+        ("GRU improves forecasting accuracy on industrial metals versus ARIMA",
+         SupportingPaper("p2", frozenset({"zhang"}), method="GRU", year=2020)),
+        ("GARCH captures volatility clustering better than rolling-window baselines",
+         SupportingPaper("p3", frozenset({"hassan"}), method="GARCH", year=2017)),
+    ]
+    clusters = cluster_claims(items)
+    # The two "improves forecasting accuracy over ARIMA" claims merge; GARCH stands alone.
+    sizes = sorted(len(c.papers) for c in clusters)
+    assert sizes == [1, 2]
+    merged = max(clusters, key=lambda c: len(c.papers))
+    assert {p.paper_id for p in merged.papers} == {"p1", "p2"}
+
+
+def test_cluster_claims_does_not_merge_opposite_polarity() -> None:
+    # "improves" and "shows no improvement" share subject tokens but must NOT cluster,
+    # else a claim and its negation get conflated into one "finding".
+    items = [
+        ("Transformers improve forecasting accuracy over LSTM baselines",
+         SupportingPaper("p1", frozenset({"a"}), year=2022)),
+        ("Transformers show no significant improvement in forecasting accuracy over LSTM",
+         SupportingPaper("p2", frozenset({"b"}), year=2023)),
+    ]
+    clusters = cluster_claims(items)
+    assert len(clusters) == 2
+    assert {c.polarity for c in clusters} == {1, -1}
+
+
+def test_cluster_claims_feeds_known_knowns() -> None:
+    # End to end: paraphrased convergent claims from independent authors -> a finding
+    # that exact-text grouping would have missed entirely.
+    items = [
+        ("LSTM improves forecasting accuracy over ARIMA",
+         SupportingPaper("p1", frozenset({"doe"}), method="LSTM", dataset="LME", year=2019)),
+        ("GRU improves forecasting accuracy versus ARIMA",
+         SupportingPaper("p2", frozenset({"zhang"}), method="GRU", dataset="COMEX", year=2020)),
+    ]
+    grouped = {c.canonical: c.papers for c in cluster_claims(items)}
+    findings = consolidate_known_knowns(grouped)
+    assert len(findings) == 1
+    assert findings[0].independent_supports == 2
+    assert findings[0].triangulated  # two methods + two datasets
 
 
 # --------------------------------------------------------------------------- quadrants

@@ -252,6 +252,30 @@ def test_landscape_proposal_and_opportunities(client: TestClient) -> None:
     assert "proposals" in opp.json()
 
 
+async def test_global_signal_is_time_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A slow/hung OpenAlex must never block a landscape request: the helper degrades
+    # to no global signal once the budget elapses.
+    import asyncio
+
+    from lattice.api import landscape
+    from lattice.config import Settings
+
+    async def _hang(*_a: object, **_k: object) -> dict:
+        await asyncio.sleep(5.0)
+        return {("x", "y"): 99}
+
+    monkeypatch.setattr(landscape, "fetch_global_counts", _hang)
+    monkeypatch.setattr(landscape, "GLOBAL_SIGNAL_BUDGET_S", 0.1)
+    from lattice.api.deps import build_container
+
+    c = build_container(Settings())
+    loop = asyncio.get_event_loop()
+    start = loop.time()
+    result = await landscape._global_counts(c, [("x", "y")])
+    assert result == {}  # degraded, not the hung value
+    assert loop.time() - start < 2.0  # returned promptly, did not wait 5s
+
+
 def test_query_non_stream(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     r = client.post("/query", json={"question": "What is unknown?"})
