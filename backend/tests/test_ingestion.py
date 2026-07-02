@@ -150,6 +150,35 @@ def test_looks_like_paywall_stub() -> None:
     assert not looks_like_paywall_stub("normal content " * 100, 200_000)
 
 
+def test_classify_pdf_default_extractor_real_pdf() -> None:
+    # Exercise the real pypdf-backed default extractor (no injected extract_text):
+    # a blank-page PDF parses fine but yields no text -> ScannedPdfError, not
+    # CorruptedPdfError. Guards against a missing/mislabeled parsing dependency.
+    import io
+
+    pypdf = pytest.importorskip("pypdf")
+    writer = pypdf.PdfWriter()
+    for _ in range(3):
+        writer.add_blank_page(width=612, height=792)
+    buf = io.BytesIO()
+    writer.write(buf)
+    data = buf.getvalue() + b" " * max(0, 3000 - buf.getbuffer().nbytes)
+    with pytest.raises(ScannedPdfError):
+        classify_pdf(data)
+
+
+def test_missing_pypdf_is_config_error_not_corrupted(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If pypdf is absent, the error must say "install the parsing extra", not
+    # mislabel every upload as a corrupted file.
+    import sys
+
+    from lattice.core.errors import ParserUnavailableError
+
+    monkeypatch.setitem(sys.modules, "pypdf", None)  # makes `from pypdf import ...` fail
+    with pytest.raises(ParserUnavailableError, match="parsing"):
+        classify_pdf(_valid_pdf_bytes())
+
+
 # --------------------------------------------------------------------------- pipeline
 def _job() -> IngestJob:
     return IngestJob(job_id="j1", source_type=SourceType.FILE, source_ref="paper.pdf")

@@ -56,6 +56,12 @@ class ParserTimeoutError(ParserError):
     retryable = True
 
 
+class ParserUnavailableError(ParserError):
+    """A parsing dependency is missing (deployment/config error, not a bad file)."""
+
+    code = "parser_unavailable"
+
+
 # ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------

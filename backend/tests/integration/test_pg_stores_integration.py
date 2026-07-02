@@ -124,7 +124,7 @@ async def test_watch_store_enqueue_dedup_and_status(pool) -> None:  # type: igno
 async def test_pdf_blob_store_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
     import io
 
-    import pypdf
+    pypdf = pytest.importorskip("pypdf")
     from lattice.db.blobs import PgBlobStore
 
     # A paper row must exist first (pdf_blobs.paper_id FK -> papers).

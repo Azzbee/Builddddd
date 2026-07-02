@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from lattice.core.errors import CorruptedPdfError, PaywalledStubError, ScannedPdfError
+from lattice.core.errors import (
+    CorruptedPdfError,
+    ParserUnavailableError,
+    PaywalledStubError,
+    ScannedPdfError,
+)
 
 _PDF_MAGIC = b"%PDF-"
 _PAYWALL_MARKERS = (
@@ -41,12 +46,18 @@ def looks_like_paywall_stub(text: str, size_bytes: int) -> bool:
     return marker_hit and (len(text) < MIN_TEXT_CHARS or size_bytes < 50_000)
 
 
-def _default_extract_text(data: bytes) -> str:  # pragma: no cover - needs pypdf
+def _default_extract_text(data: bytes) -> str:
+    # A missing pypdf is a deployment/config error, not a bad input file - surface
+    # it as such instead of mislabeling every upload as a corrupted PDF.
     try:
         import io
 
         from pypdf import PdfReader
-
+    except ImportError as exc:  # pragma: no cover - env-dependent
+        raise ParserUnavailableError(
+            "pypdf is not installed; install the 'parsing' extra to ingest PDFs"
+        ) from exc
+    try:
         reader = PdfReader(io.BytesIO(data))
         return "\n".join((page.extract_text() or "") for page in reader.pages)
     except Exception as exc:
