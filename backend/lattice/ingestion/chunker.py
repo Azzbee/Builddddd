@@ -46,9 +46,7 @@ def _split_sentences(text: str) -> list[str]:
     return [s for s in _SENTENCE_SPLIT.split(text) if s.strip()]
 
 
-def _pack(
-    sentences: list[str], max_chars: int, overlap_chars: int
-) -> list[tuple[str, int, int]]:
+def _pack(sentences: list[str], max_chars: int, overlap_chars: int) -> list[tuple[str, int, int]]:
     """Pack sentences into windows. Returns (text, char_start, char_end) triples.
 
     Offsets are approximate (reconstructed from the joined text) but monotonic and
@@ -68,8 +66,15 @@ def _pack(
     start_offset = 0
     for sent in sentences:
         slen = len(sent) + 1
-        # A single oversized sentence becomes its own (hard-split) window.
-        if slen > max_chars and not cur:
+        # A single oversized sentence becomes its own (hard-split) window. Flush any
+        # open window FIRST so the oversized sentence is split even when it arrives
+        # mid-window (previously it was appended whole to a non-empty window and
+        # emitted over-budget, blowing the embedder's token limit).
+        if slen > max_chars:
+            if cur:
+                flush(start_offset)
+                cur = []
+                cur_len = 0
             for piece_start in range(0, len(sent), max_chars):
                 piece = sent[piece_start : piece_start + max_chars]
                 windows.append((piece, cursor + piece_start, cursor + piece_start + len(piece)))

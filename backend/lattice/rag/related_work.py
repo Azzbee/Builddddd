@@ -37,14 +37,53 @@ def bibtex_key(card: PaperCard) -> str:
     return f"{author}{year}{first_word}"
 
 
+def assign_unique_keys(cards: list[PaperCard]) -> dict[str, str]:
+    """Map each paper_id to a citation key that is unique across ``cards``.
+
+    Two distinct papers can generate the same base key (same first-author surname +
+    year + first title word), e.g. two 2020 Zhang papers whose titles both start
+    with "Forecasting". Silently deduping by key would drop one paper from the
+    bibliography and misattribute its [@key] marker. Instead, disambiguate colliding
+    keys deterministically with lowercase-letter suffixes (zhang2020forecasting,
+    zhang2020forecastingb, ...), ordered by paper_id so the assignment is stable
+    regardless of input order.
+    """
+    # Group paper_ids by base key. Dedup identical paper_ids (the same card can
+    # appear in multiple clusters) so they share one entry.
+    groups: dict[str, list[str]] = {}
+    seen_ids: set[str] = set()
+    by_id: dict[str, PaperCard] = {}
+    for card in cards:
+        if card.paper_id in seen_ids:
+            continue
+        seen_ids.add(card.paper_id)
+        by_id[card.paper_id] = card
+        groups.setdefault(bibtex_key(card), []).append(card.paper_id)
+
+    keys: dict[str, str] = {}
+    for base, pids in groups.items():
+        if len(pids) == 1:
+            keys[pids[0]] = base
+            continue
+        for i, pid in enumerate(sorted(pids)):
+            # first keeps the base key; the rest get b, c, d, ... (skip 'a' so the
+            # unsuffixed key reads as the canonical one).
+            keys[pid] = base if i == 0 else f"{base}{chr(ord('a') + i)}"
+    return keys
+
+
 def _bibtex_authors(card: PaperCard) -> str:
     return " and ".join(a.name for a in card.authors) if card.authors else "Unknown"
 
 
-def to_bibtex(card: PaperCard) -> str:
-    key = bibtex_key(card)
+def to_bibtex(card: PaperCard, key: str | None = None) -> str:
+    key = key or bibtex_key(card)
     entry_type = "article" if card.venue else "misc"
-    lines = [f"@{entry_type}{{{key},", f"  title = {{{card.title}}},", f"  author = {{{_bibtex_authors(card)}}},"]
+    lines = [
+        f"@{entry_type}{{{key},",
+        f"  title = {{{card.title}}},",
+        f"  author = {{{_bibtex_authors(card)}}},",
+    ]
     if card.year:
         lines.append(f"  year = {{{card.year}}},")
     if card.venue:
@@ -59,15 +98,22 @@ def to_bibtex(card: PaperCard) -> str:
 
 
 def corpus_to_bibtex(cards: list[PaperCard]) -> str:
-    seen: set[str] = set()
-    entries: list[str] = []
-    for card in sorted(cards, key=bibtex_key):
-        key = bibtex_key(card)
-        if key in seen:
-            continue
-        seen.add(key)
-        entries.append(to_bibtex(card))
-    return "\n\n".join(entries) + ("\n" if entries else "")
+    """Render every distinct paper to a BibTeX entry with a collision-free key.
+
+    Distinct papers that collide on their base key are disambiguated (not dropped),
+    so no paper silently disappears from the bibliography.
+    """
+    keys = assign_unique_keys(cards)
+    seen_ids: set[str] = set()
+    entries: list[tuple[str, str]] = []
+    for card in cards:
+        if card.paper_id in seen_ids:
+            continue  # same paper across clusters -> one entry
+        seen_ids.add(card.paper_id)
+        key = keys[card.paper_id]
+        entries.append((key, to_bibtex(card, key)))
+    entries.sort(key=lambda e: e[0])
+    return "\n\n".join(e for _k, e in entries) + ("\n" if entries else "")
 
 
 @dataclass
@@ -76,13 +122,19 @@ class RelatedWorkCluster:
     cards: list[PaperCard]
     summary: str
     hedged: bool
+    keys: dict[str, str] = field(default_factory=dict)  # paper_id -> unique cite key
+
+    def _key(self, card: PaperCard) -> str:
+        return self.keys.get(card.paper_id) or bibtex_key(card)
 
     def to_json(self) -> dict[str, object]:
         return {
             "label": self.label,
             "summary": self.summary,
             "hedged": self.hedged,
-            "papers": [{"paper_id": c.paper_id, "key": bibtex_key(c), "title": c.title} for c in self.cards],
+            "papers": [
+                {"paper_id": c.paper_id, "key": self._key(c), "title": c.title} for c in self.cards
+            ],
         }
 
 
@@ -108,13 +160,16 @@ def _top(counter: Counter[str], n: int) -> list[str]:
     return [k for k, _ in counter.most_common(n) if k]
 
 
-def _cluster_summary(cards: list[PaperCard]) -> tuple[str, bool]:
+def _cluster_summary(
+    cards: list[PaperCard], keys: dict[str, str] | None = None
+) -> tuple[str, bool]:
+    keys = keys or {}
     methods: Counter[str] = Counter()
     datasets: Counter[str] = Counter()
     for c in cards:
         methods.update(m for m in (c.methods_taxonomy + c.methodology.techniques) if m.strip())
         datasets.update(d.name for d in c.datasets if d.name.strip())
-    cites = ", ".join(f"[@{bibtex_key(c)}]" for c in cards)
+    cites = ", ".join(f"[@{keys.get(c.paper_id) or bibtex_key(c)}]" for c in cards)
     method_str = ", ".join(_top(methods, 4)) or "a range of methods"
     data_str = ", ".join(_top(datasets, 3))
     hedged = len(cards) < 2
@@ -134,6 +189,9 @@ def build_related_work(
 ) -> RelatedWorkDraft:
     """Build a deterministic, grounded related-work draft from clustered papers."""
     clusters: list[RelatedWorkCluster] = []
+    # One corpus-wide key map so cite markers, the papers list, and the BibTeX all
+    # agree even when two distinct papers collide on their base key.
+    keys = assign_unique_keys([c for cards in groups.values() for c in cards])
     # Largest clusters first; label by dominant domain when available.
     for idx, (key, cards) in enumerate(
         sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True), start=1
@@ -142,13 +200,14 @@ def build_related_work(
         for c in cards:
             domains.update(d for d in c.domains if d.strip())
         label = _top(domains, 1)
-        summary, hedged = _cluster_summary(cards)
+        summary, hedged = _cluster_summary(cards, keys)
         clusters.append(
             RelatedWorkCluster(
                 label=label[0].title() if label else f"{label_prefix} {idx} (key {key})",
                 cards=cards,
                 summary=summary,
                 hedged=hedged,
+                keys=keys,
             )
         )
     return RelatedWorkDraft(clusters=clusters)
