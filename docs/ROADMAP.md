@@ -61,14 +61,24 @@ Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
 
 The production datastore code is no longer "written but unrun": a CI job spins up
 real Postgres+pgvector and Neo4j service containers and runs the live integration
-suite on every push (chunk ANN + hybrid search, idempotent graph writes,
-bi-temporal edges, claim relations, the Neo4j read paths, and the Postgres card /
-job / watch / digest / PDF-blob stores). Backend coverage is ~92% with an 85% CI
-floor. Persistence is wired by `LATTICE_PERSISTENT` (on by default in
-docker-compose), and a `lattice` CLI provides serve/demo/ingest/query/eval.
+suite on every push (chunk ANN + hybrid search with monotonic fused scores,
+idempotent graph writes, an idempotent edge-audit trail, bi-temporal edges, claim
+relations, the Neo4j read paths, SPECTER-vector persistence + feature rehydration
+for cross-restart linking, and the Postgres card / job / watch / digest / PDF-blob
+stores). Backend coverage is ~92% with an 85% CI floor. Persistence is wired by
+`LATTICE_PERSISTENT` (on by default in docker-compose), and a `lattice` CLI
+provides serve/demo/ingest/query/eval.
 
 ## Future work
 
 - GROBID/LLM end-to-end run in CI (needs a model key); both are thin/fixture-tested.
 - Optional Phase-2 domain-adapted embedding fine-tune (ship only if eval wins).
 - Unknown-unknowns proxies surfaced in the UI (question-coverage probing).
+- **Preprint -> published paper supersession.** `RELATED_TO` edges are already
+  bi-temporal (invalidated via `invalid_at`, never deleted) and cross-restart
+  incremental linking is wired. What is *not* yet wired is the paper-level
+  supersession heuristic (`detect_supersession` / `writer.set_superseded` +
+  `invalidate_related_edge`, both unit-tested): today the dedup stage rejects a DOI
+  -bearing published version of an existing arXiv preprint as a duplicate before
+  linking, so the SUPERSEDED_BY edge never fires. Wiring it means teaching dedup to
+  route a preprint<->published match into supersession instead of rejection.

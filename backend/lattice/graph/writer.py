@@ -78,9 +78,7 @@ class GraphWriter:
     async def upsert_concept(self, key: str, name: str, paper_id: str) -> None:
         await self._link_entity("Concept", "ADDRESSES", key, name, paper_id)
 
-    async def _link_entity(
-        self, label: str, rel: str, key: str, name: str, paper_id: str
-    ) -> None:
+    async def _link_entity(self, label: str, rel: str, key: str, name: str, paper_id: str) -> None:
         await self._store.execute(
             f"""
             MERGE (e:{label} {{workspace_id: $ws, key: $key}})
@@ -92,9 +90,7 @@ class GraphWriter:
             {"ws": self._ws, "key": key, "name": name, "pid": paper_id},
         )
 
-    async def upsert_claim(
-        self, paper_id: str, text: str, evidence_location: str
-    ) -> str:
+    async def upsert_claim(self, paper_id: str, text: str, evidence_location: str) -> str:
         claim_id = stable_id(self._ws, paper_id, text)
         await self._store.execute(
             """
@@ -104,7 +100,13 @@ class GraphWriter:
             MATCH (p:Paper {workspace_id: $ws, id: $pid})
             MERGE (p)-[:MAKES_CLAIM]->(c)
             """,
-            {"ws": self._ws, "cid": claim_id, "text": text, "pid": paper_id, "ev": evidence_location},
+            {
+                "ws": self._ws,
+                "cid": claim_id,
+                "text": text,
+                "pid": paper_id,
+                "ev": evidence_location,
+            },
         )
         return claim_id
 
@@ -136,7 +138,12 @@ class GraphWriter:
         )
 
     async def upsert_cites(
-        self, source_id: str, target_id: str, *, context: str | None = None, intent: str | None = None
+        self,
+        source_id: str,
+        target_id: str,
+        *,
+        context: str | None = None,
+        intent: str | None = None,
     ) -> None:
         await self._store.execute(
             """
@@ -145,7 +152,13 @@ class GraphWriter:
             MERGE (a)-[r:CITES]->(b)
             SET r.context = $context, r.intent = $intent
             """,
-            {"ws": self._ws, "src": source_id, "dst": target_id, "context": context, "intent": intent},
+            {
+                "ws": self._ws,
+                "src": source_id,
+                "dst": target_id,
+                "context": context,
+                "intent": intent,
+            },
         )
 
     async def upsert_claim_relation(
@@ -165,7 +178,13 @@ class GraphWriter:
             MERGE (a)-[r:{relation}]->(b)
             SET r.confidence = $confidence, r.computed_at = $now
             """,
-            {"ws": self._ws, "src": source_id, "dst": target_id, "confidence": confidence, "now": _now()},
+            {
+                "ws": self._ws,
+                "src": source_id,
+                "dst": target_id,
+                "confidence": confidence,
+                "now": _now(),
+            },
         )
 
     async def set_superseded(self, superseded_id: str, superseding_id: str) -> None:
@@ -202,13 +221,19 @@ class GraphWriter:
         return {r["target"]: r["weight"] for r in rows}
 
     async def write_audit(self, entries: list[dict[str, Any]]) -> None:
-        """Persist edge-audit entries. In production these go to Postgres; here we
-        keep a node trail so the graph store stays self-contained when needed."""
+        """Append an edge-weight-change trail as :EdgeAudit nodes on the graph store.
+
+        MERGE (not CREATE) on (source, target, new_weight, reason) so a re-run of the
+        linking stage (resume/retry) does not duplicate a change that was already
+        recorded: a genuine weight change has a different new_weight and still adds a
+        row; an identical replay is a no-op. `at` is stamped only on first insert.
+        """
         for e in entries:
             await self._store.execute(
                 """
-                CREATE (:EdgeAudit {workspace_id: $ws, source_id: $src, target_id: $dst,
-                    old_weight: $old, new_weight: $new, reason: $reason, at: $at})
+                MERGE (x:EdgeAudit {workspace_id: $ws, source_id: $src, target_id: $dst,
+                    new_weight: $new, reason: $reason})
+                ON CREATE SET x.old_weight = $old, x.at = $at
                 """,
                 {"ws": self._ws, **e},
             )

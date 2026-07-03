@@ -1,8 +1,10 @@
 """Data models for ingestion: parsed documents, regions, and job state.
 
 The job moves through an explicit state machine so any stage can crash and resume
-from the last persisted state. Linking (graph write) is the final, transactional
-step, so a crash never leaves a partial paper in the graph.
+from the last persisted state. Linking (graph write) is the final step and touches
+the graph last, so a crash before it leaves no paper in the graph; its writes are
+idempotent, so a re-run of a partially-linked paper converges (it is not a single
+cross-store transaction).
 """
 
 from __future__ import annotations

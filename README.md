@@ -31,7 +31,7 @@ resumable, and idempotent.
 | Aspect similarity | **PaperCard field embeddings** (bge-m3) | Sidesteps SPECTER2 domain bias; feeds the weight function |
 | Graph | **Custom typed schema in Neo4j** | Owning the ontology is the product |
 | Retrieval | **LightRAG-style dual-level** | Low-level facts + high-level synthesis, incremental |
-| Evolution | **Graphiti-style bi-temporal edges** | Supersede, never delete; O(k) per new paper |
+| Evolution | **Graphiti-style bi-temporal edges** | Invalidate (`invalid_at`), never delete; O(k) per new paper |
 | Enrichment | **Semantic Scholar + OpenAlex + Crossref** | Citation structure without perfect reference parsing |
 
 Full reasoning lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -177,7 +177,7 @@ eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,
   bi-temporal edges, claim relations, and the Neo4j read paths) on every push.
-- Web app builds clean (15 routes). Static SQL is parsed/validated with sqlglot.
+- Web app builds clean (16 routes). Static SQL is parsed/validated with sqlglot.
 - Offline demo mode (`make demo`) loads a populated graph with zero external
   services.
 

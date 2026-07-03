@@ -47,9 +47,13 @@ async def store():  # type: ignore[no-untyped-def]
 
 def _card(pid: str, title: str) -> PaperCard:
     return PaperCard(
-        paper_id=pid, title=title, year=2024,
-        methodology=Methodology(approach_summary="LSTM"), paper_type=PaperType.EMPIRICAL,
-        domains=["commodity markets"], methods_taxonomy=["LSTM"],
+        paper_id=pid,
+        title=title,
+        year=2024,
+        methodology=Methodology(approach_summary="LSTM"),
+        paper_type=PaperType.EMPIRICAL,
+        domains=["commodity markets"],
+        methods_taxonomy=["LSTM"],
     )
 
 
@@ -69,13 +73,41 @@ async def test_related_edge_roundtrip(store) -> None:  # type: ignore[no-untyped
     await writer.upsert_paper(_card("p2", "B"))
     feats_a = PaperFeatures("p1", specter=np.array([1.0, 0.0]), methods={"lstm"})
     edges = compute_related_edges(
-        feats_a, [PaperFeatures("p2", specter=np.array([1.0, 0.0]), methods={"lstm"})],
-        SimilarityWeights(), CosineCalibrator(),
+        feats_a,
+        [PaperFeatures("p2", specter=np.array([1.0, 0.0]), methods={"lstm"})],
+        SimilarityWeights(),
+        CosineCalibrator(),
     )
     assert edges
     await writer.upsert_related_edge(edges[0])
     weights = await writer.existing_related_weights("p1")
     assert "p2" in weights and weights["p2"] > 0
+
+
+async def test_audit_write_is_idempotent_on_replay(store) -> None:  # type: ignore[no-untyped-def]
+    writer = GraphWriter(store, "itest")
+    entry = {
+        "src": "p1",
+        "dst": "p2",
+        "old": 0.4,
+        "new": 0.6,
+        "reason": "ingest",
+        "at": "2024-01-01",
+    }
+    await writer.write_audit([entry])
+    await writer.write_audit([entry])  # replay (resume/retry) must NOT duplicate
+    rows = await store.execute(
+        "MATCH (a:EdgeAudit {workspace_id:'itest', source_id:'p1', target_id:'p2'}) "
+        "RETURN count(a) AS n"
+    )
+    assert rows[0]["n"] == 1
+    # A genuine weight change (different new_weight) still records a new row.
+    await writer.write_audit([{**entry, "new": 0.8}])
+    rows2 = await store.execute(
+        "MATCH (a:EdgeAudit {workspace_id:'itest', source_id:'p1', target_id:'p2'}) "
+        "RETURN count(a) AS n"
+    )
+    assert rows2[0]["n"] == 2
 
 
 async def test_claim_relation_and_entities(store) -> None:  # type: ignore[no-untyped-def]

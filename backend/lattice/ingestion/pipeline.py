@@ -9,8 +9,11 @@ Failures map to typed statuses:
 * any other :class:`LatticeError` -> status FAILED with a machine-readable code
 
 Because ``job.stage`` is always the last *completed* stage and is persisted after
-each step, a crash resumes exactly where it left off. Linking is the final,
-transactional stage, so a crash never leaves a partial paper in the graph.
+each step, a crash resumes exactly where it left off. Linking is the final stage
+and touches the graph last, so a crash before it leaves no paper in the graph; its
+writes are idempotent MERGEs, so a re-run of a partially-linked paper converges
+rather than duplicating. (Linking is not a single cross-store transaction, so this
+relies on idempotency, not rollback.)
 """
 
 from __future__ import annotations

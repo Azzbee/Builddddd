@@ -3,8 +3,12 @@
 This is where M1-M4 come together. Each stage handler is a method that reads and
 populates the shared PipelineContext. All collaborators are injected (parser, LLM,
 enrichment, embedders, stores, graph writer), so the entire pipeline runs and is
-tested offline with in-memory stores and a scripted model. Linking is the final,
-transactional stage: a crash before it leaves no partial paper in the graph.
+tested offline with in-memory stores and a scripted model. Linking is the final
+stage and touches the graph last, so a crash before it leaves no paper in the
+graph at all; its writes are idempotent MERGEs (nodes, edges, and the audit trail),
+so a crash partway through linking self-heals on re-run rather than duplicating.
+Note: linking spans two stores (graph + card/blob) and is not a single ACID
+transaction, so the self-healing relies on that idempotency, not on rollback.
 """
 
 from __future__ import annotations
