@@ -158,8 +158,11 @@ export function streamQuery(
         }
         if (data === null) continue;
         try {
+          const parsed = JSON.parse(data);
+          // Mark sawFinal only after a successful parse+dispatch: a corrupted final
+          // frame must NOT suppress the caller's recoverable-error fallback.
+          onEvent(eventType, parsed);
           if (eventType === "final") sawFinal = true;
-          onEvent(eventType, JSON.parse(data));
         } catch {
           /* ignore malformed frames */
         }

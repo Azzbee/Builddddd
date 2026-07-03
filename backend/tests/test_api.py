@@ -292,6 +292,34 @@ def test_query_non_stream(client: TestClient) -> None:
     assert "answer" in r.json()
 
 
+def test_query_non_stream_survives_top_level_non_object_json() -> None:
+    # The non-streaming /query has no outer try/except, so a top-level non-object
+    # from the LLM (valid JSON, but an array) must be handled inside the agent loop
+    # rather than 500ing the endpoint.
+    settings = Settings()
+    # First reply is a bare array (invalid shape), then a proper final answer.
+    llm = ScriptedLLM(["[1, 2, 3]", '{"answer": "recovered", "citations": [], "confidence": 0.3}'])
+    ingestion = IngestionService(
+        settings=settings, llm=llm, parser=FakeParser(), vectors=InMemoryVectorStore(),
+        cards=InMemoryCardStore(), blobs=InMemoryBlobStore(), graph=FakeGraphStore(),
+        specter=Specter2Embedder(dim=64), chunk_embedder=ChunkEmbedder(dim=64),
+        text_extractor=lambda b: "Real paper text. " * 60,
+    )
+    container = Container(
+        settings=settings, llm=llm, vectors=ingestion.vectors, cards=ingestion.cards,
+        jobs=InMemoryJobStore(), graph=ingestion.graph, chunk_embedder=ingestion.chunk_embedder,
+        ingestion=ingestion, watch=InMemoryWatchStore(), digests=InMemoryDigestStore(),
+        blobs=ingestion.blobs,
+    )
+    set_container(container)
+    try:
+        r = TestClient(create_app()).post("/query", json={"question": "anything"})
+    finally:
+        set_container(None)
+    assert r.status_code == 200
+    assert r.json()["answer"] == "recovered"
+
+
 class RaisingLLM:
     async def complete(self, model, messages, **kwargs):  # type: ignore[no-untyped-def]
         raise RuntimeError("provider is down")

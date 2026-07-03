@@ -247,6 +247,28 @@ async def test_agent_stream_always_ends_with_final_on_bad_output() -> None:
     assert types[-1] == "final"
 
 
+async def test_agent_survives_top_level_non_object_json() -> None:
+    # Valid JSON that is not an object (array / string / number / null) must not
+    # crash the loop: `"action" in payload` and `payload.get(...)` assume a dict.
+    # The agent should re-prompt, then answer. Covers agent.run() and the CLI/
+    # non-streaming /query paths (which have no outer try/except).
+    for bad in ("[1, 2, 3]", '"just a string"', "42", "null"):
+        tb = _toolbox(hits=[])
+        llm = ScriptedLLM([bad, json.dumps({"answer": "recovered", "confidence": 0.2})])
+        agent = RagAgent(llm, tb, RagSettings())
+        result = await agent.run("q")  # must not raise
+        assert result.answer == "recovered"
+
+
+async def test_agent_stream_survives_top_level_non_object_json() -> None:
+    tb = _toolbox(hits=[])
+    # Model never sends a valid object: loop exhausts and still yields a final.
+    llm = ScriptedLLM(["[1,2,3]"] * 20)
+    agent = RagAgent(llm, tb, RagSettings())
+    types = [e.type async for e in agent.stream("q")]
+    assert types[-1] == "final"
+
+
 async def test_agent_tracks_cost() -> None:
     from lattice.core.cost import CostTracker
 

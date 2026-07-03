@@ -125,6 +125,13 @@ class RagAgent:
                 messages.append(LLMMessage("assistant", resp.text))
                 messages.append(LLMMessage("user", "Respond with a single valid JSON object only."))
                 continue
+            if not isinstance(payload, dict):
+                # Valid JSON, but a top-level array/string/number/null. `"action" in`
+                # and `.get` below assume an object, so re-prompt instead of crashing
+                # out of the loop (which would 500 /query and agent.run()).
+                messages.append(LLMMessage("assistant", resp.text))
+                messages.append(LLMMessage("user", "Respond with a single valid JSON object only."))
+                continue
 
             if "action" in payload:
                 if len(tool_calls) >= self._settings.max_tool_calls:
