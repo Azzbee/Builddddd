@@ -211,6 +211,55 @@ async def test_linking_survives_a_process_restart() -> None:
     assert key1 == key2
 
 
+async def test_concurrent_hydrate_loads_exactly_once() -> None:
+    # Two ingests firing concurrently (as arq workers would) must not each run the
+    # feature load: the lock + double-check serialize hydration so load_features is
+    # called exactly once. (Without any guard, both call it -> calls == 2.) This is
+    # the deterministically-testable half of the fix; the lock additionally ensures a
+    # late arrival waits for full population rather than racing a half-filled pool.
+    import asyncio
+
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+    seed = _service(
+        FakeParser({"s.pdf": _doc("LSTM seed", "LSTM", ["10.1/s"])}),
+        ScriptedLLM([_content(["LSTM"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    await seed.ingest_pdf("s.pdf", _pdf("S"))
+    seed_pid = (await shared_cards.all_cards())[0].paper_id
+
+    calls = {"n": 0}
+    orig = shared_cards.load_features
+
+    async def slow_load():  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        await asyncio.sleep(0.05)  # hold the lock long enough for B to arrive
+        return await orig()
+
+    shared_cards.load_features = slow_load  # type: ignore[method-assign]
+
+    svc = _service(
+        FakeParser(
+            {
+                "a.pdf": _doc("GRU one", "GRU", ["10.1/a"]),
+                "b.pdf": _doc("GRU two", "GRU", ["10.1/b"]),
+            }
+        ),
+        ScriptedLLM([_content(["GRU"]), _content(["GRU"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    await asyncio.gather(svc.ingest_pdf("a.pdf", _pdf("A")), svc.ingest_pdf("b.pdf", _pdf("B")))
+    assert calls["n"] == 1, "hydration must load exactly once despite concurrency"
+    # The seeded paper is in the pool, so whichever ingest ran second still linked
+    # against a fully populated corpus (not an empty one).
+    assert seed_pid in svc._features
+
+
 async def test_hydrate_is_idempotent_and_keeps_richer_in_memory_features() -> None:
     shared_cards = InMemoryCardStore()
     shared_vectors = InMemoryVectorStore()

@@ -13,6 +13,7 @@ transaction, so the self-healing relies on that idempotency, not on rollback.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,7 +26,7 @@ from lattice.core.hashing import content_hash, normalize_arxiv, normalize_doi, s
 from lattice.core.llm import LLMClient
 from lattice.core.logging import get_logger
 from lattice.db.blobs import BlobStore, InMemoryBlobStore
-from lattice.db.cards import CorpusStore
+from lattice.db.cards import CorpusStore, StoredFeatures
 from lattice.db.vector import VectorRecord, VectorStore
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
 from lattice.embeddings.specter2 import Specter2Embedder
@@ -123,6 +124,7 @@ class IngestionService:
     #: Whether the in-memory linking state has been rehydrated from persistent stores
     #: this process. Guards a one-shot load so restarts don't link against an empty pool.
     _hydrated: bool = False
+    _hydrate_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def __post_init__(self) -> None:
         ws = self.settings.workspace_id
@@ -148,13 +150,23 @@ class IngestionService:
         """
         if self._hydrated:
             return
-        self._hydrated = True  # set first: a load failure must not retry-loop per ingest
-        try:
-            stored = await self.cards.load_features()
-        except Exception as exc:  # persistence hiccup: run with what's in memory
-            log.warning("hydrate.failed", error=str(exc))
-            return
+        # Serialize hydration: a second concurrent ingest must WAIT for the in-flight
+        # load rather than race past a half-populated pool. Double-check inside the
+        # lock so only the first waiter does the work.
+        async with self._hydrate_lock:
+            if self._hydrated:
+                return
+            try:
+                stored = await self.cards.load_features()
+            except Exception as exc:  # persistence hiccup: run with what's in memory
+                log.warning("hydrate.failed", error=str(exc))
+                self._hydrated = True  # don't retry-loop on every ingest
+                return
+            self._populate_from_features(stored)
+            self._hydrated = True
+            log.info("hydrate.done", papers=len(stored))
 
+    def _populate_from_features(self, stored: list[StoredFeatures]) -> None:
         import numpy as np
 
         for feat in stored:
@@ -174,7 +186,6 @@ class IngestionService:
                 self.method_resolver.register(m)
             for d in feat.datasets:
                 self.dataset_resolver.register(d)
-        log.info("hydrate.done", papers=len(stored))
 
     async def ingest_pdf(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
         await self.hydrate()
