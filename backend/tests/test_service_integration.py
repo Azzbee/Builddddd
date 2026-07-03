@@ -40,10 +40,16 @@ def _doc(title: str, methods: str, refs: list[str]) -> ParsedDocument:
         doi=None,
         arxiv_id=None,
         sections=[
-            ParsedSection(section_id="s1", title="Methodology",
-                          text=f"We train {methods} on daily LME copper prices."),
-            ParsedSection(section_id="s2", title="Results",
-                          text="Our model reaches RMSE 0.12, beating ARIMA at 0.21."),
+            ParsedSection(
+                section_id="s1",
+                title="Methodology",
+                text=f"We train {methods} on daily LME copper prices.",
+            ),
+            ParsedSection(
+                section_id="s2",
+                title="Results",
+                text="Our model reaches RMSE 0.12, beating ARIMA at 0.21.",
+            ),
         ],
         references=[ParsedReference(raw=r, doi=r) for r in refs],
     )
@@ -53,7 +59,9 @@ class FakeParser:
     def __init__(self, docs: dict[str, ParsedDocument]) -> None:
         self.docs = docs
 
-    async def process_fulltext(self, pdf_bytes: bytes, filename: str = "paper.pdf") -> ParsedDocument:
+    async def process_fulltext(
+        self, pdf_bytes: bytes, filename: str = "paper.pdf"
+    ) -> ParsedDocument:
         return self.docs[filename]
 
 
@@ -71,7 +79,12 @@ def _content(methods: list[str]) -> str:
             },
             "datasets": [{"name": "LME Copper", "source": "LME", "is_public": True}],
             "key_results": [
-                {"claim": "beats ARIMA", "metric": "RMSE", "value": "0.12", "evidence_location": "Results"}
+                {
+                    "claim": "beats ARIMA",
+                    "metric": "RMSE",
+                    "value": "0.12",
+                    "evidence_location": "Results",
+                }
             ],
             "limitations": ["single commodity"],
             "contributions": ["new model"],
@@ -89,16 +102,25 @@ class ScriptedLLM:
         self._responses = list(responses)
 
     async def complete(self, model, messages: list[LLMMessage], **kwargs) -> LLMResponse:
-        return LLMResponse(text=self._responses.pop(0), input_tokens=800, output_tokens=300, model=model)
+        return LLMResponse(
+            text=self._responses.pop(0), input_tokens=800, output_tokens=300, model=model
+        )
 
 
-def _service(parser: FakeParser, llm: ScriptedLLM, graph: FakeGraphStore) -> IngestionService:
+def _service(
+    parser: FakeParser,
+    llm: ScriptedLLM,
+    graph: FakeGraphStore,
+    *,
+    vectors: InMemoryVectorStore | None = None,
+    cards: InMemoryCardStore | None = None,
+) -> IngestionService:
     return IngestionService(
         settings=Settings(),
         llm=llm,
         parser=parser,
-        vectors=InMemoryVectorStore(),
-        cards=InMemoryCardStore(),
+        vectors=vectors or InMemoryVectorStore(),
+        cards=cards or InMemoryCardStore(),
         graph=graph,
         specter=Specter2Embedder(dim=128),
         text_extractor=lambda b: "Real extracted paper text. " * 60,
@@ -126,7 +148,9 @@ async def test_full_ingest_two_papers_creates_graph_and_edge() -> None:
 
     # Chunks embedded and searchable.
     hits = await svc.vectors.hybrid_search(
-        "RMSE copper", svc.chunk_embedder.embed_texts(["RMSE copper"])[0], 5,
+        "RMSE copper",
+        svc.chunk_embedder.embed_texts(["RMSE copper"])[0],
+        5,
         {"workspace_id": "default"},
     )
     assert hits and any("RMSE" in h.text for h in hits)
@@ -136,7 +160,78 @@ async def test_full_ingest_two_papers_creates_graph_and_edge() -> None:
     assert any("RELATED_TO" in q for q, _ in graph.calls)
 
 
-async def test_source_pdf_is_stored_for_reader() -> None:
+async def test_linking_survives_a_process_restart() -> None:
+    # A fresh IngestionService that shares the persistent stores but starts with an
+    # empty in-memory pool (simulating a process restart) must still link a new paper
+    # against papers ingested before the "restart", and must reuse their Method node
+    # instead of minting a duplicate. This exercises hydrate().
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+
+    # Process 1: ingest one LSTM paper.
+    docs1 = {"a.pdf": _doc("LSTM copper forecasting", "LSTM attention", ["10.1/shared", "10.1/a"])}
+    svc1 = _service(
+        FakeParser(docs1),
+        ScriptedLLM([_content(["LSTM", "attention"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    await svc1.ingest_pdf("a.pdf", _pdf("A"))
+    assert len(await shared_cards.all_cards()) == 1
+    # The SPECTER vector was persisted, so it can be rehydrated.
+    feats = await shared_cards.load_features()
+    assert (
+        feats and feats[0].specter is not None and "lstm" in {m.lower() for m in feats[0].methods}
+    )
+
+    # Process 2: brand-new service, same stores, empty in-memory linking state.
+    graph2 = FakeGraphStore()
+    docs2 = {"b.pdf": _doc("LSTM copper prediction", "LSTM gru", ["10.1/shared", "10.1/b"])}
+    svc2 = _service(
+        FakeParser(docs2),
+        ScriptedLLM([_content(["LSTM", "GRU"])]),
+        graph2,
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    assert not svc2._features  # fresh process: nothing loaded yet
+    job_b = await svc2.ingest_pdf("b.pdf", _pdf("B"))
+    assert job_b.status == JobStatus.SUCCEEDED
+
+    # hydrate() pulled paper A into the candidate pool, so B linked against it.
+    assert job_b.paper_id in svc2._features
+    assert len(svc2._features) == 2, "the pre-restart paper must be in the candidate pool"
+    assert any("RELATED_TO" in q for q, _ in graph2.calls), "new paper linked to the old one"
+
+    # The shared "LSTM" method resolves to ONE canonical key across both processes
+    # (no duplicate Method node from the restart).
+    key1 = svc1.method_resolver.resolve("LSTM").key  # type: ignore[union-attr]
+    key2 = svc2.method_resolver.resolve("LSTM").key  # type: ignore[union-attr]
+    assert key1 == key2
+
+
+async def test_hydrate_is_idempotent_and_keeps_richer_in_memory_features() -> None:
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+    docs = {"a.pdf": _doc("LSTM copper forecasting", "LSTM attention", ["10.1/a"])}
+    svc = _service(
+        FakeParser(docs),
+        ScriptedLLM([_content(["LSTM", "attention"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    job = await svc.ingest_pdf("a.pdf", _pdf("A"))
+    pid = job.paper_id
+    assert pid is not None
+    # The just-ingested paper carries a methodology embedding in memory.
+    before = svc._features[pid].methodology_embedding
+    assert before is not None
+    # Calling hydrate again must not overwrite the richer in-memory feature.
+    svc._hydrated = False
+    await svc.hydrate()
+    assert svc._features[pid].methodology_embedding is before
     docs = {"paper_a.pdf": _doc("LSTM copper forecasting", "LSTM", ["10.1/a"])}
     llm = ScriptedLLM([_content(["LSTM"])])
     svc = _service(FakeParser(docs), llm, FakeGraphStore())
@@ -181,7 +276,9 @@ async def test_time_travel_snapshot_timeline_and_delta() -> None:
         "mid.pdf": _doc_year("GRU copper forecasting", "GRU LSTM", 2020),
         "new.pdf": _doc_year("Transformer copper forecasting", "transformer attention", 2023),
     }
-    llm = ScriptedLLM([_content(["LSTM", "attention"]), _content(["GRU"]), _content(["transformer"])])
+    llm = ScriptedLLM(
+        [_content(["LSTM", "attention"]), _content(["GRU"]), _content(["transformer"])]
+    )
     svc = _service(FakeParser(docs), llm, FakeGraphStore())
     await svc.ingest_pdf("old.pdf", _pdf("O"))
     await svc.ingest_pdf("mid.pdf", _pdf("M"))
@@ -218,10 +315,12 @@ async def test_research_proposal_and_opportunities() -> None:
         "b.pdf": _doc_year("VAR panels", "VAR", 2020),
     }
     # Distinct datasets so a real empty cell (lstm x comex gold) exists.
-    llm = ScriptedLLM([
-        _content(["LSTM"]),  # dataset: LME Copper
-        _content(["VAR"]).replace("LME Copper", "COMEX Gold"),
-    ])
+    llm = ScriptedLLM(
+        [
+            _content(["LSTM"]),  # dataset: LME Copper
+            _content(["VAR"]).replace("LME Copper", "COMEX Gold"),
+        ]
+    )
     svc = _service(FakeParser(docs), llm, FakeGraphStore())
     await svc.ingest_pdf("a.pdf", _pdf("A"))
     await svc.ingest_pdf("b.pdf", _pdf("B"))

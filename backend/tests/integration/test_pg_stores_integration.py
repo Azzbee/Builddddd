@@ -46,9 +46,15 @@ async def pool():  # type: ignore[no-untyped-def]
 
 def _card(pid: str, title: str) -> PaperCard:
     return PaperCard(
-        paper_id=pid, title=title, authors=[Author(name="Jane Doe")], year=2024,
-        doi=f"10.1/{pid}", methodology=Methodology(approach_summary="LSTM"),
-        paper_type=PaperType.EMPIRICAL, methods_taxonomy=["LSTM"], confidence=0.9,
+        paper_id=pid,
+        title=title,
+        authors=[Author(name="Jane Doe")],
+        year=2024,
+        doi=f"10.1/{pid}",
+        methodology=Methodology(approach_summary="LSTM"),
+        paper_type=PaperType.EMPIRICAL,
+        methods_taxonomy=["LSTM"],
+        confidence=0.9,
     )
 
 
@@ -65,9 +71,33 @@ async def test_card_roundtrip_and_corpus_index(pool) -> None:  # type: ignore[no
 
     index = await store.corpus_index()
     dup = index.find_duplicate(
-        type(index.titles[0])(paper_id="x", title="Copper LSTM", authors=["Jane Doe"], doi="10.1/p1")
+        type(index.titles[0])(
+            paper_id="x", title="Copper LSTM", authors=["Jane Doe"], doi="10.1/p1"
+        )
     )
     assert dup.is_duplicate and dup.existing_paper_id == "p1"
+
+
+async def test_specter_persists_and_load_features_rehydrates(pool) -> None:  # type: ignore[no-untyped-def]
+    # The SPECTER vector must round-trip through pgvector and load_features must
+    # rebuild the per-paper feature bundle used for cross-restart incremental linking.
+    store = PgCardStore(pool, "ws")
+    vec = [0.1] * 768
+    await store.put_card(_card("p1", "Copper LSTM"), specter=vec)
+    await store.put_card(_card("p2", "Copper GRU"))  # no specter -> None
+
+    feats = {f.paper_id: f for f in await store.load_features()}
+    assert set(feats) == {"p1", "p2"}
+    assert feats["p1"].specter is not None
+    assert len(feats["p1"].specter) == 768
+    assert abs(feats["p1"].specter[0] - 0.1) < 1e-6
+    assert "lstm" in {m.lower() for m in feats["p1"].methods}
+    assert feats["p2"].specter is None
+
+    # A later put_card without a specter must not wipe the stored vector (COALESCE).
+    await store.put_card(_card("p1", "Copper LSTM v2"))
+    feats2 = {f.paper_id: f for f in await store.load_features()}
+    assert feats2["p1"].specter is not None and len(feats2["p1"].specter) == 768
 
 
 async def test_card_upsert_idempotent(pool) -> None:  # type: ignore[no-untyped-def]
@@ -81,8 +111,15 @@ async def test_card_upsert_idempotent(pool) -> None:  # type: ignore[no-untyped-
 async def test_job_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
     store = PgJobStore(pool, "ws")
     job = IngestJob(
-        job_id="j1", workspace_id="ws", source_type=SourceType.FILE, source_ref="a.pdf",
-        stage=JobStage.LINKING, status=JobStatus.SUCCEEDED, paper_id="p1", attempts=1, cost_usd=0.12,
+        job_id="j1",
+        workspace_id="ws",
+        source_type=SourceType.FILE,
+        source_ref="a.pdf",
+        stage=JobStage.LINKING,
+        status=JobStatus.SUCCEEDED,
+        paper_id="p1",
+        attempts=1,
+        cost_usd=0.12,
     )
     await store.save(job)
     got = await store.get("j1")
@@ -94,7 +131,9 @@ async def test_job_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
 async def test_job_workspace_isolation(pool) -> None:  # type: ignore[no-untyped-def]
     a = PgJobStore(pool, "wsA")
     b = PgJobStore(pool, "wsB")
-    await a.save(IngestJob(job_id="j1", workspace_id="wsA", source_type=SourceType.FILE, source_ref="a"))
+    await a.save(
+        IngestJob(job_id="j1", workspace_id="wsA", source_type=SourceType.FILE, source_ref="a")
+    )
     assert len(await a.all_jobs()) == 1
     assert len(await b.all_jobs()) == 0
 

@@ -47,6 +47,18 @@ graph.
    resolution, idempotent graph writes, edge audit, citation edges. The paper is
    now live in the graph.
 
+Incremental linking keeps a per-paper feature pool (SPECTER vectors, method and
+dataset sets) and the entity-resolver registries in memory for O(k)-per-paper
+linking. Because those are lost on a process restart, the persistent path also
+stores each paper's SPECTER vector (`papers.specter`) and rehydrates the pool +
+resolver registries from Postgres once, before the first ingest of a process
+(`IngestionService.hydrate`). So a paper ingested after a restart still links
+against the whole corpus and reuses existing Method/Dataset nodes rather than
+minting duplicates. The methodology-section embedding and citation reference set
+are not persisted, so a rehydrated paper links on sem + method-tags + dataset; the
+similarity function renormalizes over the available components, so this degrades
+gracefully rather than dropping edges.
+
 ## Component decisions
 
 - **GROBID + Docling region router.** GROBID is the backbone for structure and

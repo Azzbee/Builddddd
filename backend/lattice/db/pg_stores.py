@@ -11,19 +11,21 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from lattice.db.cards import StoredFeatures
 from lattice.extraction.schemas import PaperCard
 from lattice.ingestion.dedup import CorpusIndex, PaperIdentity
 from lattice.ingestion.models import IngestJob
 
 SQL_UPSERT_PAPER = """
 INSERT INTO papers (paper_id, workspace_id, title, authors, year, venue, doi, arxiv_id,
-                    s2_paper_id, card, confidence, needs_review, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+                    s2_paper_id, card, confidence, needs_review, specter, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
 ON CONFLICT (paper_id) DO UPDATE SET
     title = EXCLUDED.title, authors = EXCLUDED.authors, year = EXCLUDED.year,
     venue = EXCLUDED.venue, doi = EXCLUDED.doi, arxiv_id = EXCLUDED.arxiv_id,
     s2_paper_id = EXCLUDED.s2_paper_id, card = EXCLUDED.card,
     confidence = EXCLUDED.confidence, needs_review = EXCLUDED.needs_review,
+    specter = COALESCE(EXCLUDED.specter, papers.specter),
     updated_at = now()
 """
 
@@ -33,6 +35,9 @@ SQL_CORPUS_INDEX = (
     "SELECT paper_id, title, authors, doi, arxiv_id, content_hash "
     "FROM papers WHERE workspace_id = $1"
 )
+# card holds methods/datasets; specter is the paper-level SPECTER vector. Both are
+# what incremental linking needs to rehydrate after a restart.
+SQL_LOAD_FEATURES = "SELECT paper_id, card, specter FROM papers WHERE workspace_id = $1"
 
 SQL_UPSERT_JOB = """
 INSERT INTO ingest_jobs (job_id, workspace_id, source_type, source_ref, content_hash,
@@ -61,15 +66,11 @@ SQL_PENDING_WATCH = (
 SQL_SET_WATCH_STATUS = (
     "UPDATE watch_queue SET status = $3 WHERE workspace_id = $1 AND arxiv_id = $2"
 )
-SQL_ADD_DIGEST = (
-    "INSERT INTO digests (workspace_id, period_label, report) VALUES ($1, $2, $3)"
-)
+SQL_ADD_DIGEST = "INSERT INTO digests (workspace_id, period_label, report) VALUES ($1, $2, $3)"
 SQL_LATEST_DIGEST = (
     "SELECT report FROM digests WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 1"
 )
-SQL_DIGEST_HISTORY = (
-    "SELECT report FROM digests WHERE workspace_id = $1 ORDER BY created_at DESC"
-)
+SQL_DIGEST_HISTORY = "SELECT report FROM digests WHERE workspace_id = $1 ORDER BY created_at DESC"
 
 #: All statements, for static SQL validation in tests/test_sql.py.
 PG_STORE_SQL = {
@@ -77,6 +78,7 @@ PG_STORE_SQL = {
     "get_card": SQL_GET_CARD,
     "all_cards": SQL_ALL_CARDS,
     "corpus_index": SQL_CORPUS_INDEX,
+    "load_features": SQL_LOAD_FEATURES,
     "upsert_job": SQL_UPSERT_JOB,
     "get_job": SQL_GET_JOB,
     "all_jobs": SQL_ALL_JOBS,
@@ -98,14 +100,23 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
         self._pool = pool
         self._ws = workspace_id
 
-    async def put_card(self, card: PaperCard) -> None:
+    async def put_card(self, card: PaperCard, specter: list[float] | None = None) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 SQL_UPSERT_PAPER,
-                card.paper_id, self._ws, card.title,
+                card.paper_id,
+                self._ws,
+                card.title,
                 json.dumps([a.model_dump(mode="json") for a in card.authors]),
-                card.year, card.venue, card.doi, card.arxiv_id, card.s2_paper_id,
-                card.model_dump_json(), card.confidence, card.needs_review,
+                card.year,
+                card.venue,
+                card.doi,
+                card.arxiv_id,
+                card.s2_paper_id,
+                card.model_dump_json(),
+                card.confidence,
+                card.needs_review,
+                specter,
             )
 
     async def get_card(self, paper_id: str) -> dict[str, Any] | None:
@@ -138,6 +149,25 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
         ]
         return CorpusIndex.from_identities(idents)
 
+    async def load_features(self) -> list[StoredFeatures]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(SQL_LOAD_FEATURES, self._ws)
+        out: list[StoredFeatures] = []
+        for r in rows:
+            card = PaperCard.model_validate(_loads(r["card"]))
+            spec = r["specter"]
+            # pgvector may hand back a Vector/ndarray or a list depending on codec.
+            specter = list(spec) if spec is not None else None
+            out.append(
+                StoredFeatures(
+                    paper_id=r["paper_id"],
+                    specter=specter,
+                    methods=card.normalized_methods,
+                    datasets=card.normalized_datasets,
+                )
+            )
+        return out
+
 
 class PgJobStore:  # pragma: no cover - exercised by integration tests
     def __init__(self, pool: Any, workspace_id: str = "default") -> None:
@@ -148,9 +178,18 @@ class PgJobStore:  # pragma: no cover - exercised by integration tests
         async with self._pool.acquire() as conn:
             await conn.execute(
                 SQL_UPSERT_JOB,
-                job.job_id, self._ws, str(job.source_type), job.source_ref,
-                job.content_hash, job.paper_id, str(job.stage), str(job.status),
-                job.error_code, job.error_message, job.attempts, job.cost_usd,
+                job.job_id,
+                self._ws,
+                str(job.source_type),
+                job.source_ref,
+                job.content_hash,
+                job.paper_id,
+                str(job.stage),
+                str(job.status),
+                job.error_code,
+                job.error_message,
+                job.attempts,
+                job.cost_usd,
                 job.created_at,
             )
 
@@ -175,8 +214,12 @@ class PgWatchStore:  # pragma: no cover - exercised by integration tests
         async with self._pool.acquire() as conn:
             for item in items:
                 result = await conn.execute(
-                    SQL_ENQUEUE_WATCH, self._ws, str(item.get("arxiv_id")), item.get("title", ""),
-                    float(item.get("similarity", 0.0)), item.get("nearest_paper_id"),
+                    SQL_ENQUEUE_WATCH,
+                    self._ws,
+                    str(item.get("arxiv_id")),
+                    item.get("title", ""),
+                    float(item.get("similarity", 0.0)),
+                    item.get("nearest_paper_id"),
                 )
                 if result.endswith("1"):  # "INSERT 0 1" when a row was added
                     added += 1
