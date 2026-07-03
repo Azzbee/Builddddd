@@ -58,7 +58,29 @@ def test_corpus_to_bibtex_disambiguates_distinct_key_collisions() -> None:
     bib = corpus_to_bibtex([a, b])
     assert bib.count("@article") == 2  # both kept
     assert "@article{doe2024copper," in bib
-    assert "@article{doe2024copperb," in bib  # second disambiguated
+    assert "@article{doe2024coppera," in bib  # second disambiguated
+
+
+def test_assign_unique_keys_handles_many_collisions_and_base_clash() -> None:
+    from lattice.rag.related_work import assign_unique_keys
+
+    # 30 distinct papers that all collide on the same base key: suffixes must stay
+    # valid (b..z, then aa, ab, ...) past the 26-letter boundary, never emitting a
+    # non-letter like '{'.
+    cards = [_card(f"p{i}", "Copper Forecasting with LSTM", ["LSTM"], "x") for i in range(30)]
+    keys = assign_unique_keys(cards)
+    assert len(set(keys.values())) == 30  # all unique
+    for k in keys.values():
+        assert k == "doe2024copper" or k[len("doe2024copper") :].isalpha()
+    assert "doe2024copperaa" in keys.values()  # 27th distinct key (i=26 -> 'aa')
+
+    # A paper whose base key literally equals another paper's suffixed key must not
+    # collide: assignment stays globally unique.
+    a = _card("p1", "Copper Forecasting", ["LSTM"], "x")  # -> doe2024copper
+    b = _card("p2", "Copper Forecasting", ["LSTM"], "x")  # -> doe2024copper (collides -> ...b)
+    clash = _card("p3", "Copperb Forecasting", ["LSTM"], "x")  # base key -> doe2024copperb
+    keys2 = assign_unique_keys([a, b, clash])
+    assert len(set(keys2.values())) == 3
 
 
 def test_related_work_cite_markers_match_unique_keys() -> None:
@@ -73,7 +95,7 @@ def test_related_work_cite_markers_match_unique_keys() -> None:
     draft = build_related_work(groups)
     cluster = draft.clusters[0]
     marker_keys = {p["key"] for p in cluster.to_json()["papers"]}  # type: ignore[index]
-    assert marker_keys == {"doe2024copper", "doe2024copperb"}
+    assert marker_keys == {"doe2024copper", "doe2024coppera"}
     for k in marker_keys:
         assert f"[@{k}]" in cluster.summary
         assert f"@article{{{k}," in draft.bibtex()
