@@ -115,11 +115,20 @@ export const api = {
 };
 
 // SSE streaming for the chat agent.
+//
+// The backend guarantees the stream always ends with exactly one `final` event.
+// `onDone` still fires on every terminal path — normal completion, an aborted
+// request, or a network drop the server never saw — so the caller can always
+// reset its UI (e.g. clear a "thinking..." spinner) instead of hanging forever.
+// `saw_final` tells the caller whether a real answer arrived; if not, `error`
+// carries the reason (or null on a clean cancel).
 export function streamQuery(
   question: string,
   onEvent: (type: string, data: Record<string, unknown>) => void,
+  onDone?: (info: { sawFinal: boolean; error: string | null }) => void,
 ): () => void {
   const controller = new AbortController();
+  let sawFinal = false;
   (async () => {
     const res = await fetch(`${BASE}/query/stream`, {
       method: "POST",
@@ -127,11 +136,13 @@ export function streamQuery(
       body: JSON.stringify({ question }),
       signal: controller.signal,
     });
-    if (!res.body) return;
+    if (!res.ok) throw new Error(`query/stream -> ${res.status}`);
+    if (!res.body) throw new Error("query/stream -> empty body");
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let eventType = "message";
+    // Reset the event type per frame: a frame with only a `data:` line defaults
+    // to "message" rather than inheriting the previous frame's event name.
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -139,20 +150,27 @@ export function streamQuery(
       const frames = buffer.split("\n\n");
       buffer = frames.pop() ?? "";
       for (const frame of frames) {
+        let eventType = "message";
+        let data: string | null = null;
         for (const line of frame.split("\n")) {
           if (line.startsWith("event:")) eventType = line.slice(6).trim();
-          else if (line.startsWith("data:")) {
-            try {
-              onEvent(eventType, JSON.parse(line.slice(5).trim()));
-            } catch {
-              /* ignore malformed frames */
-            }
-          }
+          else if (line.startsWith("data:")) data = line.slice(5).trim();
+        }
+        if (data === null) continue;
+        try {
+          if (eventType === "final") sawFinal = true;
+          onEvent(eventType, JSON.parse(data));
+        } catch {
+          /* ignore malformed frames */
         }
       }
     }
-  })().catch(() => {
-    /* aborted or network error */
-  });
+  })()
+    .then(() => onDone?.({ sawFinal, error: null }))
+    .catch((err: unknown) => {
+      // An aborted request is a deliberate cancel, not an error.
+      const aborted = err instanceof DOMException && err.name === "AbortError";
+      onDone?.({ sawFinal, error: aborted ? null : String(err) });
+    });
   return () => controller.abort();
 }

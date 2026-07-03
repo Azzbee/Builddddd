@@ -79,6 +79,16 @@ class AgentResult:
     cost_usd: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    error: bool = False  # the answer is a failure notice, not a grounded response
+
+    @classmethod
+    def failure(cls, message: str) -> AgentResult:
+        """A terminal failure result: abstained, zero confidence, flagged as an error.
+
+        Used when the agent could not complete (provider outage, cost cap, a bug) so
+        the SSE stream still ends with a valid `final` event and the UI can recover.
+        """
+        return cls(answer=message, confidence=0.0, abstained=True, error=True)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -92,4 +102,5 @@ class AgentResult:
             "abstained": self.abstained,
             "cost_usd": round(self.cost_usd, 6),
             "tokens": {"input": self.input_tokens, "output": self.output_tokens},
+            "error": self.error,
         }

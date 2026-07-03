@@ -87,7 +87,9 @@ async def test_tool_get_paper_card() -> None:
 async def test_tool_graph_neighbors_builds_typed_traversal() -> None:
     graph = FakeGraphStore({"RETURN DISTINCT n.id": [{"id": "p2", "title": "N", "weight": 0.8}]})
     tb = _toolbox(graph=graph)
-    out = await tb.call("graph_neighbors", {"paper_id": "p1", "edge_types": ["RELATED_TO"], "hops": 2})
+    out = await tb.call(
+        "graph_neighbors", {"paper_id": "p1", "edge_types": ["RELATED_TO"], "hops": 2}
+    )
     assert out["neighbors"][0]["id"] == "p2"
     q = graph.calls[-1][0]
     assert "RELATED_TO*1..2" in q
@@ -159,9 +161,7 @@ async def test_agent_uses_tool_then_answers_with_citation() -> None:
 
 async def test_agent_abstains_on_low_confidence() -> None:
     tb = _toolbox(hits=[])
-    llm = ScriptedLLM(
-        [json.dumps({"answer": "", "citations": [], "confidence": 0.1})]
-    )
+    llm = ScriptedLLM([json.dumps({"answer": "", "citations": [], "confidence": 0.1})])
     agent = RagAgent(llm, tb, RagSettings())
     result = await agent.run("Something not in the corpus?")
     assert result.abstained
@@ -174,7 +174,9 @@ async def test_agent_streams_events() -> None:
     llm = ScriptedLLM(
         [
             json.dumps({"action": "search_chunks", "args": {"query": "x"}}),
-            json.dumps({"answer": "Answer [1].", "citations": [{"paper_id": "p1"}], "confidence": 0.8}),
+            json.dumps(
+                {"answer": "Answer [1].", "citations": [{"paper_id": "p1"}], "confidence": 0.8}
+            ),
         ]
     )
     agent = RagAgent(llm, tb, RagSettings())
@@ -193,6 +195,56 @@ async def test_agent_respects_tool_call_ceiling() -> None:
     result = await agent.run("q")
     assert result.abstained
     assert len(result.tool_calls) == 3  # ceiling enforced
+
+
+async def test_agent_survives_non_numeric_confidence() -> None:
+    # A syntactically valid final answer with a non-numeric confidence must not
+    # crash the agent (it used to raise ValueError out of the generator, 500ing
+    # /query and killing the SSE stream). It degrades to a zero-confidence abstain.
+    tb = _toolbox(hits=[])
+    llm = ScriptedLLM([json.dumps({"answer": "Copper is up.", "confidence": "high"})])
+    agent = RagAgent(llm, tb, RagSettings())
+    result = await agent.run("q")
+    assert result.confidence == 0.0
+    assert result.abstained
+
+
+async def test_agent_survives_null_and_out_of_range_confidence() -> None:
+    tb = _toolbox(hits=[])
+    for bad in (None, [0.9], "0.8x", float("nan")):
+        llm = ScriptedLLM([json.dumps({"answer": "x", "confidence": bad})])
+        agent = RagAgent(llm, tb, RagSettings())
+        result = await agent.run("q")
+        assert result.confidence == 0.0
+    # Out-of-range numeric confidence is clamped, not rejected.
+    llm = ScriptedLLM([json.dumps({"answer": "x", "citations": [], "confidence": 5})])
+    result = await RagAgent(llm, _toolbox(hits=[]), RagSettings()).run("q")
+    assert result.confidence == 1.0
+
+
+async def test_agent_survives_non_list_citations() -> None:
+    # build_citations iterates and calls .get on each item; a string citations
+    # field used to raise AttributeError. Now it is coerced to an empty list.
+    hit = ChunkHit("c1", "p1", "Paper", "Results", "text", 0.9, "Sec 1")
+    tb = _toolbox(hits=[hit])
+    llm = ScriptedLLM(
+        [
+            json.dumps({"action": "search_chunks", "args": {"query": "x"}}),
+            json.dumps({"answer": "A [1].", "citations": "see paper 1", "confidence": 0.9}),
+        ]
+    )
+    agent = RagAgent(llm, tb, RagSettings())
+    result = await agent.run("q")
+    assert result.citations == []
+    assert result.answer.startswith("A")
+
+
+async def test_agent_stream_always_ends_with_final_on_bad_output() -> None:
+    tb = _toolbox(hits=[])
+    llm = ScriptedLLM([json.dumps({"answer": "x", "confidence": "nope"})])
+    agent = RagAgent(llm, tb, RagSettings())
+    types = [e.type async for e in agent.stream("q")]
+    assert types[-1] == "final"
 
 
 async def test_agent_tracks_cost() -> None:

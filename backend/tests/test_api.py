@@ -31,7 +31,9 @@ class ScriptedLLM:
 
 
 class FakeParser:
-    async def process_fulltext(self, pdf_bytes: bytes, filename: str = "paper.pdf") -> ParsedDocument:
+    async def process_fulltext(
+        self, pdf_bytes: bytes, filename: str = "paper.pdf"
+    ) -> ParsedDocument:
         return ParsedDocument(
             title=f"Paper {filename}",
             authors=["Jane Doe"],
@@ -48,7 +50,11 @@ def _card_json(title_tag: str) -> str:
         {
             "problem_statement": "Forecasting copper prices is hard.",
             "research_questions": [],
-            "methodology": {"approach_summary": "LSTM", "techniques": ["LSTM"], "baselines": ["ARIMA"]},
+            "methodology": {
+                "approach_summary": "LSTM",
+                "techniques": ["LSTM"],
+                "baselines": ["ARIMA"],
+            },
             "datasets": [{"name": "LME Copper"}],
             "key_results": [{"claim": "beats ARIMA", "evidence_location": "Results"}],
             "limitations": ["single commodity"],
@@ -65,7 +71,10 @@ def _card_json(title_tag: str) -> str:
 @pytest.fixture
 def client() -> TestClient:
     settings = Settings()
-    llm = ScriptedLLM([_card_json("a"), _card_json("b")] + ['{"answer": "x", "citations": [], "confidence": 0.0}'] * 5)
+    llm = ScriptedLLM(
+        [_card_json("a"), _card_json("b")]
+        + ['{"answer": "x", "citations": [], "confidence": 0.0}'] * 5
+    )
     vectors = InMemoryVectorStore()
     cards = InMemoryCardStore()
     blobs = InMemoryBlobStore()
@@ -283,6 +292,65 @@ def test_query_non_stream(client: TestClient) -> None:
     assert "answer" in r.json()
 
 
+class RaisingLLM:
+    async def complete(self, model, messages, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("provider is down")
+
+
+def test_query_stream_ends_with_final_when_agent_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If the agent raises mid-stream (provider outage), the SSE stream must still
+    # emit exactly one terminal `final` event so the client UI recovers instead of
+    # hanging forever on "thinking...".
+    settings = Settings()
+    llm = RaisingLLM()
+    vectors = InMemoryVectorStore()
+    cards = InMemoryCardStore()
+    blobs = InMemoryBlobStore()
+    ingestion = IngestionService(
+        settings=settings,
+        llm=llm,
+        parser=FakeParser(),
+        vectors=vectors,
+        cards=cards,
+        blobs=blobs,
+        graph=FakeGraphStore(),
+        specter=Specter2Embedder(dim=64),
+        chunk_embedder=ChunkEmbedder(dim=64),
+        text_extractor=lambda b: "Real paper text. " * 60,
+    )
+    container = Container(
+        settings=settings,
+        llm=llm,
+        vectors=vectors,
+        cards=cards,
+        jobs=InMemoryJobStore(),
+        graph=ingestion.graph,
+        chunk_embedder=ingestion.chunk_embedder,
+        ingestion=ingestion,
+        watch=InMemoryWatchStore(),
+        digests=InMemoryDigestStore(),
+        blobs=blobs,
+    )
+    set_container(container)
+    try:
+        c = TestClient(create_app())
+        with c.stream("POST", "/query/stream", json={"question": "anything"}) as r:
+            assert r.status_code == 200
+            body = "".join(r.iter_text())
+    finally:
+        set_container(None)
+
+    # Parse SSE frames (CRLF-delimited): the last event must be `final` + error.
+    frames = [f for f in body.replace("\r\n", "\n").split("\n\n") if f.strip()]
+    assert frames, "stream produced no events"
+    last = frames[-1]
+    assert "event: final" in last
+    data_line = next(line for line in last.splitlines() if line.startswith("data:"))
+    payload = json.loads(data_line[len("data:") :].strip())
+    assert payload["error"] is True
+    assert payload["abstained"] is True
+
+
 def test_landscape_quadrants(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
@@ -335,7 +403,10 @@ def test_watch_queue_and_approve(client: TestClient) -> None:
     # The override container uses the in-memory watch store; seed it directly.
     store = get_container("default").watch
     store._items["2406.123"] = {  # type: ignore[attr-defined]
-        "arxiv_id": "2406.123", "title": "Cand", "similarity": 0.6, "status": "pending",
+        "arxiv_id": "2406.123",
+        "title": "Cand",
+        "similarity": 0.6,
+        "status": "pending",
     }
     queue = client.get("/watch/queue").json()
     assert any(item["arxiv_id"] == "2406.123" for item in queue)
@@ -376,7 +447,10 @@ def test_auth_enforced_when_token_set(monkeypatch: pytest.MonkeyPatch) -> None:
         app = create_app()
         c = TestClient(app)
         assert c.get("/papers").status_code == 401
-        assert c.get("/papers", headers={"Authorization": "Bearer secret"}).status_code in (200, 500)
+        assert c.get("/papers", headers={"Authorization": "Bearer secret"}).status_code in (
+            200,
+            500,
+        )
     finally:
         monkeypatch.delenv("LATTICE_AUTH_TOKEN", raising=False)
         get_settings.cache_clear()

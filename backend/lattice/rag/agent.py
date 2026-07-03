@@ -71,8 +71,7 @@ class RagAgent:
 
     def _system_prompt(self, query_class: str) -> str:
         tool_lines = "\n".join(
-            f"- {t['name']}({', '.join(t['parameters'])}): {t['description']}"
-            for t in TOOL_SCHEMAS
+            f"- {t['name']}({', '.join(t['parameters'])}): {t['description']}" for t in TOOL_SCHEMAS
         )
         return _SYSTEM.format(
             floor=self._settings.low_confidence_floor,
@@ -158,10 +157,14 @@ class RagAgent:
                 )
                 continue
 
-            # Final answer.
+            # Final answer. The model's output shape is untrusted: a syntactically
+            # valid JSON object can still carry a non-numeric confidence or a
+            # non-list citations field. Coerce defensively so a malformed final
+            # answer degrades to a low-confidence abstention instead of raising
+            # out of the generator (which would 500 /query and kill the SSE stream).
             answer = str(payload.get("answer", "")).strip()
-            confidence = float(payload.get("confidence", 0.0))
-            claimed = payload.get("citations") or []
+            confidence = _coerce_confidence(payload.get("confidence"))
+            claimed = _coerce_citations(payload.get("citations"))
             citations = build_citations(claimed, provenance)
             abstained = confidence < self._settings.low_confidence_floor or not provenance.papers
             if abstained and not answer:
@@ -202,6 +205,32 @@ class RagAgent:
             cost_usd=round(final.cost_usd, 6),
         )
         yield AgentEvent("final", {"result": final})
+
+
+def _coerce_confidence(value: Any) -> float:
+    """Best-effort numeric confidence in [0, 1] from untrusted model output.
+
+    A model may emit ``"confidence": "high"``, ``null``, or a stray list; none of
+    those should crash the agent. Anything non-numeric maps to 0.0 (abstain).
+    """
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if conf != conf:  # NaN
+        return 0.0
+    return max(0.0, min(1.0, conf))
+
+
+def _coerce_citations(value: Any) -> list[dict[str, Any]]:
+    """Normalize the model's ``citations`` field to a list of dicts.
+
+    ``build_citations`` iterates and calls ``.get`` on each item, so a string or a
+    list of bare ids would raise. Keep only dict entries; drop everything else.
+    """
+    if not isinstance(value, list):
+        return []
+    return [c for c in value if isinstance(c, dict)]
 
 
 def _absorb(provenance: Provenance, result: Any) -> None:

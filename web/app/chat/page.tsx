@@ -37,26 +37,47 @@ export default function ChatPage() {
       { question, answer: "", citations: [], confidence: 0, abstained: false, trace: [], done: false },
     ]);
 
-    cancelRef.current = streamQuery(question, (type, data) => {
-      setTurns((prev) => {
-        const next = [...prev];
-        const turn = { ...next[idx] };
-        if (type === "status") {
-          turn.trace = [...turn.trace, { type, label: `classified: ${data.query_class}` }];
-        } else if (type === "tool_call") {
-          turn.trace = [...turn.trace, { type, label: `tool: ${data.name}` }];
-        } else if (type === "final") {
-          turn.answer = String(data.answer ?? "");
-          turn.citations = (data.citations as Citation[]) ?? [];
-          turn.confidence = Number(data.confidence ?? 0);
-          turn.abstained = Boolean(data.abstained);
-          turn.done = true;
-          setBusy(false);
+    cancelRef.current = streamQuery(
+      question,
+      (type, data) => {
+        setTurns((prev) => {
+          const next = [...prev];
+          const turn = { ...next[idx] };
+          if (type === "status") {
+            turn.trace = [...turn.trace, { type, label: `classified: ${data.query_class}` }];
+          } else if (type === "tool_call") {
+            turn.trace = [...turn.trace, { type, label: `tool: ${data.name}` }];
+          } else if (type === "final") {
+            turn.answer = String(data.answer ?? "");
+            turn.citations = (data.citations as Citation[]) ?? [];
+            turn.confidence = Number(data.confidence ?? 0);
+            turn.abstained = Boolean(data.abstained);
+            turn.done = true;
+          }
+          next[idx] = turn;
+          return next;
+        });
+      },
+      ({ sawFinal, error }) => {
+        // Always runs when the stream ends, however it ends. If no `final` event
+        // ever arrived (network drop mid-stream), surface a recoverable error on
+        // the turn instead of leaving it stuck on "thinking..." forever.
+        if (!sawFinal) {
+          setTurns((prev) => {
+            const next = [...prev];
+            const turn = { ...next[idx] };
+            turn.answer = error
+              ? "The connection dropped before an answer arrived. Please try again."
+              : "Cancelled.";
+            turn.abstained = true;
+            turn.done = true;
+            next[idx] = turn;
+            return next;
+          });
         }
-        next[idx] = turn;
-        return next;
-      });
-    });
+        setBusy(false);
+      },
+    );
   }
 
   return (
