@@ -27,6 +27,7 @@ from lattice.core.llm import LLMClient, LLMMessage
 from lattice.core.logging import get_logger
 from lattice.extraction.prompts import load_prompt, prompt_hash
 from lattice.extraction.schemas import Author, LLMPaperCardContent, PaperCard
+from lattice.extraction.skeleton import schema_skeleton
 
 log = get_logger("extraction")
 
@@ -49,12 +50,16 @@ def render_prompt(
     max_chars: int,
 ) -> str:
     template = load_prompt(version)
+    # str.format inserts a field's value verbatim (it does not re-scan the inserted
+    # text for braces), so the skeleton's JSON braces pass through as-is. The body is
+    # substituted the same way; only the template's own {..} fields are interpreted.
     return template.format(
         title=title or "(unknown)",
         authors=", ".join(authors) if authors else "(unknown)",
         year=year if year is not None else "(unknown)",
         body=body[:max_chars],
         low_confidence_notice=_LOW_CONF_NOTICE if low_confidence else "",
+        schema=schema_skeleton(LLMPaperCardContent),
     )
 
 
@@ -75,9 +80,7 @@ def completeness(content: LLMPaperCardContent) -> float:
 def score_confidence(content: LLMPaperCardContent, parse_confidence: float) -> float:
     """Blend self-report, completeness, and parser confidence into [0, 1]."""
     return round(
-        0.5 * content.self_confidence
-        + 0.3 * completeness(content)
-        + 0.2 * parse_confidence,
+        0.5 * content.self_confidence + 0.3 * completeness(content) + 0.2 * parse_confidence,
         4,
     )
 
@@ -180,7 +183,12 @@ async def extract_paper_card(
         identity=identity,
         meta={
             "extraction_model": model,
-            "extraction_version": f"{settings.prompt_version}@{prompt_hash(settings.prompt_version)}",
+            # Fold the schema skeleton into the hash: a schema change alters the
+            # effective prompt, so it must alter the recorded version too.
+            "extraction_version": (
+                f"{settings.prompt_version}"
+                f"@{prompt_hash(settings.prompt_version, schema_skeleton(LLMPaperCardContent))}"
+            ),
             "confidence": conf,
             "needs_review": bool(reasons),
             "review_reasons": reasons,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from lattice.config import Settings, get_settings
 from lattice.core.cost import CostTracker, Usage, estimate_cost, price_for
@@ -11,6 +13,39 @@ from lattice.core.hashing import (
     normalize_text,
     stable_id,
 )
+from lattice.core.llm import LLMResponse
+
+
+# --------------------------------------------------------------- LLM JSON salvage
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"a": 1}',  # clean
+        '```json\n{"a": 1}\n```',  # fenced
+        '```\n{"a": 1}\n```',  # fenced without language tag
+        'Here is the JSON you asked for:\n```json\n{"a": 1}\n```\nHope this helps!',  # prose + fence
+        'Sure! The result is {"a": 1} as requested.',  # bare prose wrapping
+    ],
+)
+def test_llm_response_json_salvages_common_wrappings(text: str) -> None:
+    assert LLMResponse(text=text).json() == {"a": 1}
+
+
+def test_llm_response_json_nested_braces_in_prose() -> None:
+    # first-{ to last-} must span the whole object, not stop at an inner brace.
+    out = LLMResponse(text='prefix {"a": {"b": [1, 2]}} suffix').json()
+    assert out == {"a": {"b": [1, 2]}}
+
+
+def test_llm_response_json_top_level_array_passes_through() -> None:
+    assert LLMResponse(text="[1, 2, 3]").json() == [1, 2, 3]
+
+
+def test_llm_response_json_garbage_still_raises() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        LLMResponse(text="I could not produce any JSON, sorry.").json()
+    with pytest.raises(json.JSONDecodeError):
+        LLMResponse(text="broken {not json} here").json()
 
 
 def test_content_hash_is_stable_and_distinct() -> None:

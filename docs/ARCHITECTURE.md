@@ -37,6 +37,23 @@ graph.
    extraction completeness, and parse confidence; low confidence escalates to a
    stronger model once, then flags `needs_review`. Results lacking an
    `evidence_location` are dropped (anti-hallucination).
+
+   The extraction boundary is deliberately robust to weak/cheap models (small
+   local models via `ollama/...`, budget hosted tiers), each measure driven by a
+   failure observed live from a local 7B model:
+   - The prompt embeds a JSON skeleton *generated from the pydantic model*
+     (`extraction/skeleton.py`), so weak models see the exact shape instead of a
+     prose description, and the prompt can never drift from the validator. The
+     skeleton is folded into `extraction_version`'s hash, so a schema change is
+     visible as a version change for re-extraction backfills.
+   - `LLMResponse.json()` salvages fenced and prose-wrapped JSON before giving up.
+   - LLM-facing models inherit `LLMTolerantModel`: null-for-empty means absent,
+     bare scalars wrap into lists, unknown keys are ignored, degenerate list
+     entries (all-null datasets/results) are dropped, and `paper_type` is
+     case-insensitive. Required-field omissions still fail loudly into the repair
+     loop, and the internal `PaperCard` stays `extra="forbid"`. Net effect: fewer
+     repair round-trips and escalations, which is also what keeps per-paper cost
+     down on hosted models.
 3. **ENRICHING** - Semantic Scholar / OpenAlex / Crossref add ids, citation
    counts, references, concepts, and (free) precomputed SPECTER2 vectors.
    Best-effort: failures degrade to text-only similarity.

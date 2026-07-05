@@ -58,9 +58,104 @@ def test_author_normalized_name() -> None:
     assert Author(name="  Émile  Zola ").normalized_name == "emile zola"
 
 
-def test_extra_fields_forbidden() -> None:
+def test_llm_boundary_tolerant_but_papercard_strict() -> None:
+    # LLM-facing models ignore unknown keys (weak models add junk); the internal
+    # PaperCard stays extra="forbid" so OUR bugs are still caught loudly.
+    r = Result.model_validate({"claim": "x", "bogus": "y"})
+    assert r.claim == "x" and not hasattr(r, "bogus")
     with pytest.raises(ValidationError):
-        Result(claim="x", bogus="y")  # type: ignore[call-arg]
+        PaperCard(paper_id="p", title="t", methodology=_methodology(), bogus=1)  # type: ignore[call-arg]
+
+
+def test_llm_boundary_null_means_absent() -> None:
+    # Observed live from a local 7B model: null for "empty" list/scalar fields.
+    content = LLMPaperCardContent.model_validate(
+        {
+            "problem_statement": "P.",
+            "methodology": {
+                "approach_summary": "A.",
+                "baselines": None,
+                "evaluation_protocol": None,
+            },
+            "limitations": None,
+            "self_confidence": None,
+            "key_results": [{"claim": "c", "evidence_location": None}],
+        }
+    )
+    assert content.methodology.baselines == []
+    assert content.methodology.evaluation_protocol is None  # genuinely optional stays None
+    assert content.limitations == []
+    assert content.self_confidence == 0.5  # default applied
+    assert content.key_results[0].evidence_location == ""
+
+
+def test_llm_boundary_null_required_still_fails() -> None:
+    with pytest.raises(ValidationError):
+        LLMPaperCardContent.model_validate(
+            {"problem_statement": None, "methodology": {"approach_summary": "A."}}
+        )
+
+
+def test_llm_boundary_wraps_bare_scalar_into_list() -> None:
+    content = LLMPaperCardContent.model_validate(
+        {
+            "problem_statement": "P.",
+            "methodology": {"approach_summary": "A.", "techniques": "LSTM"},
+            "contributions": "a single contribution",
+        }
+    )
+    assert content.contributions == ["a single contribution"]
+    assert content.methodology.techniques == ["LSTM"]
+
+
+def test_paper_type_case_insensitive() -> None:
+    assert PaperType(" EMPIRICAL ") is PaperType.EMPIRICAL
+    assert PaperType("Survey") is PaperType.SURVEY
+    with pytest.raises(ValueError):
+        PaperType("poem")  # a genuinely wrong value still fails -> repair loop
+
+
+def test_llm_boundary_drops_degenerate_list_entries() -> None:
+    # Verbatim live failure (local 7B, Dreamer paper): one all-null dataset entry
+    # burned every repair attempt and killed the whole extraction. Degenerate
+    # entries are noise ("nothing here"); the card must survive without them.
+    content = LLMPaperCardContent.model_validate(
+        {
+            "problem_statement": "P.",
+            "methodology": {"approach_summary": "A."},
+            "datasets": [
+                {
+                    "name": None,
+                    "source": None,
+                    "size": None,
+                    "is_public": None,
+                    "url": None,
+                    "evidence_location": None,
+                },
+                {"name": "DeepMind Control Suite", "source": None},
+                None,
+            ],
+            "key_results": [{"claim": None, "metric": "RMSE"}, {"claim": "real claim"}],
+            "limitations": ["a", None, "b"],
+        }
+    )
+    assert [d.name for d in content.datasets] == ["DeepMind Control Suite"]
+    assert [r.claim for r in content.key_results] == ["real claim"]
+    assert content.limitations == ["a", "b"]
+
+
+def test_llm_boundary_coerces_bare_string_list_entries() -> None:
+    # "datasets": ["LME Copper"] -> the element's single required field.
+    content = LLMPaperCardContent.model_validate(
+        {
+            "problem_statement": "P.",
+            "methodology": {"approach_summary": "A."},
+            "datasets": ["LME Copper"],
+            "key_results": ["beats ARIMA"],
+        }
+    )
+    assert content.datasets[0].name == "LME Copper"
+    assert content.key_results[0].claim == "beats ARIMA"
 
 
 def test_llm_content_to_card_merges_identity_and_meta() -> None:

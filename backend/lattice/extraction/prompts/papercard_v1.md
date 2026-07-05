@@ -19,9 +19,16 @@ Rules:
 - `self_confidence`: your calibrated confidence (0-1) that this extraction is
   faithful. Lower it when the source text is garbled, truncated, or low quality.
 
+Return a single JSON object with EXACTLY these top-level keys (do not nest them
+under `title` or any wrapper). `problem_statement` and `methodology` are required;
+list fields may be `[]` and optional scalars may be `null`:
+
+{schema}
+
 {low_confidence_notice}
 
-Return ONLY valid JSON matching the schema. No prose, no markdown fences.
+Return ONLY valid JSON matching the schema above. No prose, no markdown fences, no
+wrapper object.
 
 --- PAPER ---
 Title: {title}

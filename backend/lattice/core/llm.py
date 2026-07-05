@@ -9,8 +9,12 @@ mode returns parsed output plus token usage for cost accounting.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+#: A fenced code block anywhere in the text (weak models wrap JSON in prose).
+_FENCED_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 
 @dataclass
@@ -28,14 +32,28 @@ class LLMResponse:
     raw: dict[str, Any] = field(default_factory=dict)
 
     def json(self) -> Any:
-        """Parse the response text as JSON, tolerating ```json fences."""
+        """Parse the response text as JSON, salvaging common weak-model wrappings.
+
+        Tried in order: the raw text; a ```json fenced block anywhere (models often
+        add prose around it, e.g. "Here is the JSON: ..."); the outermost
+        ``{...}`` span. Raises :class:`json.JSONDecodeError` if none parses, so the
+        caller's repair loop gets a real signal instead of a silent None.
+        """
         text = self.text.strip()
-        if text.startswith("```"):
-            text = text.split("```", 2)[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.strip().rstrip("`").strip()
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        fenced = _FENCED_BLOCK.search(text)
+        if fenced:
+            try:
+                return json.loads(fenced.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+        start, end = text.find("{"), text.rfind("}")
+        if 0 <= start < end:
+            return json.loads(text[start : end + 1])
+        raise json.JSONDecodeError("no JSON object found in response", text, 0)
 
 
 class LLMClient(Protocol):

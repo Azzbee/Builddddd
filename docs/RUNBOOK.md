@@ -32,6 +32,37 @@ Demo mode (`LATTICE_DEMO_MODE=true`) wires deterministic models and loads a smal
 deliberately interconnected corpus at startup, so the graph, contradictions,
 quadrants, momentum, lineage, and reading queue are all populated immediately.
 
+## Local model (real papers, zero API cost)
+
+Run the full real pipeline (GROBID parse -> extraction -> embeddings -> linking ->
+graph) against a local Ollama model instead of a hosted API. Verified end to end
+with `qwen2.5:7b`: real arXiv PDFs ingest, link, and chat for $0.00.
+
+```bash
+# prerequisites: Ollama running with a model pulled, e.g. `ollama pull qwen2.5:7b`
+docker run -d --name grobid -p 8070:8070 lfoppiano/grobid:0.8.1
+cd backend && uv pip install -e ".[llm,parsing]"
+
+LATTICE_EXTRACTION__PRIMARY_MODEL=ollama/qwen2.5:7b \
+LATTICE_EXTRACTION__ESCALATION_MODEL=ollama/qwen2.5:7b \
+LATTICE_EXTRACTION__FALLBACK_MODEL=ollama/qwen2.5:7b \
+LATTICE_RAG__AGENT_MODEL=ollama/qwen2.5:7b \
+LATTICE_RAG__ROUTER_MODEL=ollama/qwen2.5:7b \
+LATTICE_GROBID__URL=http://localhost:8070 \
+LATTICE_EXTRACTION__MAX_INPUT_CHARS=8000 \
+uv run uvicorn lattice.api.app:app --port 8000
+```
+
+Notes:
+- `MAX_INPUT_CHARS=8000` matters: small models lose the output schema under very
+  long contexts (the default 120k is sized for hosted frontier models). 8k covers
+  abstract + intro + methodology, which is where PaperCard content lives.
+- Extraction is tolerant of weak-model output quirks (fenced/prose-wrapped JSON,
+  null-for-empty fields, degenerate list entries; see ARCHITECTURE.md), so a 7B
+  model typically extracts in one call with zero repair rounds.
+- Expect rougher extractions than hosted models (fewer datasets/results captured);
+  use this mode to validate infrastructure, not extraction quality.
+
 ## Full stack
 
 ```bash
