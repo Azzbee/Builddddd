@@ -126,3 +126,38 @@ async def test_claim_relation_and_entities(store) -> None:  # type: ignore[no-un
         "MATCH (:Paper {workspace_id:'itest', id:'p1'})-[:USES_METHOD]->(m:Method) RETURN m.name AS name"
     )
     assert methods[0]["name"] == "LSTM"
+
+
+async def test_supersession_invalidates_edges_both_directions(store) -> None:  # type: ignore[no-untyped-def]
+    writer = GraphWriter(store, "itest")
+    for pid, title in (("pre", "Preprint"), ("pub", "Published"), ("x", "Other")):
+        await writer.upsert_paper(_card(pid, title))
+    feats = {
+        pid: PaperFeatures(pid, specter=np.array([1.0, 0.0]), methods={"lstm"})
+        for pid in ("pre", "pub", "x")
+    }
+    w = SimilarityWeights()
+    cal = CosineCalibrator()
+    # pre -> x (outgoing) and x -> pre (incoming): both must be invalidated.
+    for src, dst in (("pre", "x"), ("x", "pre")):
+        edges = compute_related_edges(feats[src], [feats[dst]], w, cal)
+        assert edges
+        await writer.upsert_related_edge(edges[0])
+
+    await writer.set_superseded("pre", "pub")
+    await writer.invalidate_related_edges_of("pre", reason="superseded_by:pub")
+
+    live = await store.execute(
+        "MATCH (:Paper {workspace_id:'itest'})-[r:RELATED_TO]->(:Paper) "
+        "WHERE r.invalid_at IS NULL RETURN count(r) AS n"
+    )
+    assert live[0]["n"] == 0, "every live edge touching the superseded paper is invalidated"
+    total = await store.execute(
+        "MATCH (:Paper {workspace_id:'itest'})-[r:RELATED_TO]->(:Paper) RETURN count(r) AS n"
+    )
+    assert total[0]["n"] == 2, "invalidated, never deleted"
+    sup = await store.execute(
+        "MATCH (:Paper {workspace_id:'itest', id:'pre'})-[r:SUPERSEDED_BY]->"
+        "(:Paper {workspace_id:'itest', id:'pub'}) RETURN count(r) AS n"
+    )
+    assert sup[0]["n"] == 1

@@ -208,6 +208,19 @@ class GraphWriter:
             {"ws": self._ws, "src": source_id, "dst": target_id, "now": _now(), "reason": reason},
         )
 
+    async def invalidate_related_edges_of(self, paper_id: str, reason: str) -> None:
+        """Invalidate every live RELATED_TO edge touching ``paper_id``, both
+        directions (bi-temporal: superseded papers keep their history, hidden from
+        default views by the ``invalid_at IS NULL`` read filters)."""
+        await self._store.execute(
+            """
+            MATCH (a:Paper {workspace_id: $ws, id: $pid})-[r:RELATED_TO]-(b:Paper {workspace_id: $ws})
+            WHERE r.invalid_at IS NULL
+            SET r.invalid_at = $now, r.invalid_reason = $reason
+            """,
+            {"ws": self._ws, "pid": paper_id, "now": _now(), "reason": reason},
+        )
+
     async def existing_related_weights(self, source_id: str) -> dict[str, float]:
         """Return current outgoing RELATED_TO weights for a paper (for auditing)."""
         rows = await self._store.execute(

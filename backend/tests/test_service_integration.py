@@ -55,6 +55,15 @@ def _doc(title: str, methods: str, refs: list[str]) -> ParsedDocument:
     )
 
 
+def _doc_ids(
+    title: str, methods: str, *, doi: str | None = None, arxiv: str | None = None
+) -> ParsedDocument:
+    d = _doc(title, methods, ["10.1/shared"])
+    d.doi = doi
+    d.arxiv_id = arxiv
+    return d
+
+
 class FakeParser:
     def __init__(self, docs: dict[str, ParsedDocument]) -> None:
         self.docs = docs
@@ -412,3 +421,119 @@ def test_assign_paper_id_prefers_doi() -> None:
     by_doi = assign_paper_id(ParsedDocument(title="t", doi="10.1/X"), "ws")
     by_doi2 = assign_paper_id(ParsedDocument(title="different", doi="https://doi.org/10.1/x"), "ws")
     assert by_doi == by_doi2  # same DOI -> same id regardless of title
+
+# ----------------------------------------------------------------- supersession
+async def test_published_version_supersedes_preprint() -> None:
+    # The living-graph story: the arXiv preprint is ingested first; when the
+    # published (DOI-bearing) version of the same manuscript arrives, it is NOT
+    # rejected as a duplicate - it supersedes the preprint. Bi-temporal: the
+    # preprint stays stored, its edges are invalidated, and it leaves the
+    # candidate pool and analytics so the work is never counted twice.
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+    graph = FakeGraphStore()
+    docs = {
+        "pre.pdf": _doc_ids("Copper forecasting with LSTM", "LSTM attention", arxiv="2401.00001"),
+        "pub.pdf": _doc_ids("Copper Forecasting with LSTM", "LSTM attention", doi="10.1234/jf.2024.7"),
+    }
+    svc = _service(
+        FakeParser(docs),
+        ScriptedLLM([_content(["LSTM", "attention"]), _content(["LSTM", "attention"])]),
+        graph,
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    pre = await svc.ingest_pdf("pre.pdf", _pdf("PRE"))
+    assert pre.status == JobStatus.SUCCEEDED
+    pub = await svc.ingest_pdf("pub.pdf", _pdf("PUB"))
+    assert pub.status == JobStatus.SUCCEEDED, pub.error_message
+    assert pre.paper_id != pub.paper_id  # two versions, two nodes
+
+    # Store-level supersession flag.
+    assert await shared_cards.superseded_ids() == {pre.paper_id}
+    # Graph-level: SUPERSEDED_BY edge written, preprint's edges invalidated.
+    assert any("SUPERSEDED_BY" in q for q, _ in graph.calls)
+    assert any(
+        "invalid_at = $now" in q and p.get("pid") == pre.paper_id for q, p in graph.calls
+    )
+    # The published version did NOT link to its own preprint.
+    assert svc._related.get(pub.paper_id) == []
+    # Candidate pool and mirrors: preprint gone.
+    assert pre.paper_id not in svc._features
+    assert pre.paper_id not in svc._related
+    # Analytics and the default graph view count the work exactly once.
+    assert [c.paper_id for c in await svc._active_cards()] == [pub.paper_id]
+    snap = await svc.graph_snapshot()
+    assert {n.id for n in snap.nodes} == {pub.paper_id}
+    # But the preprint remains retrievable by id (supersede, never delete).
+    assert await shared_cards.get(pre.paper_id) is not None
+
+
+async def test_outdated_preprint_rejected_when_published_exists() -> None:
+    shared_cards = InMemoryCardStore()
+    docs = {
+        "pub.pdf": _doc_ids("Copper Forecasting with LSTM", "LSTM", doi="10.1234/jf.2024.7"),
+        "pre.pdf": _doc_ids("Copper forecasting with LSTM", "LSTM", arxiv="2401.00001"),
+    }
+    svc = _service(
+        FakeParser(docs),
+        ScriptedLLM([_content(["LSTM"])]),
+        FakeGraphStore(),
+        cards=shared_cards,
+    )
+    pub = await svc.ingest_pdf("pub.pdf", _pdf("PUB"))
+    assert pub.status == JobStatus.SUCCEEDED
+    pre = await svc.ingest_pdf("pre.pdf", _pdf("PRE"))
+    assert pre.status == JobStatus.DUPLICATE
+    assert "outdated preprint" in (pre.error_message or "")
+    assert await shared_cards.superseded_ids() == set()  # nothing was ingested
+
+
+async def test_same_identifier_match_is_still_a_plain_duplicate() -> None:
+    # Identifier-level matches (same DOI) are the same artifact, never supersession.
+    docs = {
+        "a.pdf": _doc_ids("Copper Forecasting with LSTM", "LSTM", doi="10.1/same"),
+        "b.pdf": _doc_ids("Copper Forecasting with LSTM v2", "LSTM", doi="10.1/same"),
+    }
+    svc = _service(FakeParser(docs), ScriptedLLM([_content(["LSTM"])]), FakeGraphStore())
+    assert (await svc.ingest_pdf("a.pdf", _pdf("A"))).status == JobStatus.SUCCEEDED
+    dup = await svc.ingest_pdf("b.pdf", _pdf("B"))
+    assert dup.status == JobStatus.DUPLICATE
+    assert "duplicate of" in (dup.error_message or "")
+
+
+async def test_superseded_paper_stays_out_of_pool_after_restart() -> None:
+    # Hydration must not resurrect a superseded preprint into the candidate pool,
+    # and rehydrated papers now carry their aspect vectors (full-fidelity restore).
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+    docs1 = {
+        "pre.pdf": _doc_ids("Copper forecasting with LSTM", "LSTM", arxiv="2401.00001"),
+        "pub.pdf": _doc_ids("Copper Forecasting with LSTM", "LSTM", doi="10.1234/jf.2024.7"),
+    }
+    svc1 = _service(
+        FakeParser(docs1),
+        ScriptedLLM([_content(["LSTM"]), _content(["LSTM"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    pre = await svc1.ingest_pdf("pre.pdf", _pdf("PRE"))
+    pub = await svc1.ingest_pdf("pub.pdf", _pdf("PUB"))
+
+    # "Restart": fresh service, same stores. Ingest a third paper to trigger hydrate.
+    docs2 = {"c.pdf": _doc_ids("GRU networks for metal prices", "GRU")}
+    svc2 = _service(
+        FakeParser(docs2),
+        ScriptedLLM([_content(["GRU"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    third = await svc2.ingest_pdf("c.pdf", _pdf("C"))
+    assert third.status == JobStatus.SUCCEEDED
+    assert pre.paper_id not in svc2._features, "superseded preprint must not rehydrate"
+    assert pub.paper_id in svc2._features
+    # Full-fidelity hydration: the methodology aspect vector survived the restart.
+    assert svc2._features[pub.paper_id].methodology_embedding is not None
+    assert pub.paper_id in svc2._aspects

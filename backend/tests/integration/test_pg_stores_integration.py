@@ -199,3 +199,26 @@ async def test_digest_store_add_latest_history(pool) -> None:  # type: ignore[no
     latest = await store.latest()
     assert latest is not None and latest["markdown"] == "# two"
     assert len(await store.history()) == 2
+
+
+async def test_aspects_persist_and_superseded_excluded_from_features(pool) -> None:  # type: ignore[no-untyped-def]
+    # Aspect vectors round-trip through JSONB (full-fidelity rehydration), and a
+    # superseded paper is excluded from load_features but stays retrievable.
+    store = PgCardStore(pool, "ws")
+    aspects = {"problem": [0.1] * 4, "methodology": [0.2] * 4, "results": [0.3] * 4}
+    await store.put_card(_card("p1", "Preprint LSTM"), specter=[0.1] * 768, aspects=aspects)
+    await store.put_card(_card("p2", "Published LSTM"), specter=[0.2] * 768)
+
+    feats = {f.paper_id: f for f in await store.load_features()}
+    assert feats["p1"].aspects is not None
+    assert feats["p1"].aspects["methodology"] == [0.2] * 4
+    # A later card update without aspects must not wipe them (COALESCE).
+    await store.put_card(_card("p1", "Preprint LSTM v2"))
+    feats2 = {f.paper_id: f for f in await store.load_features()}
+    assert feats2["p1"].aspects is not None
+
+    await store.mark_superseded("p1", "p2")
+    assert await store.superseded_ids() == {"p1"}
+    remaining = {f.paper_id for f in await store.load_features()}
+    assert remaining == {"p2"}, "superseded paper must not rehydrate"
+    assert await store.get("p1") is not None  # supersede, never delete
