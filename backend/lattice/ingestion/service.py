@@ -38,6 +38,7 @@ from lattice.graph.contradictions import (
     HeuristicNLIJudge,
     NLIJudge,
     detect_relations,
+    detect_relations_for,
 )
 from lattice.graph.entity_resolution import EntityResolver
 from lattice.graph.evolution import (
@@ -455,6 +456,12 @@ class IngestionService:
         if isinstance(superseded_id, str):
             await self._apply_supersession(superseded_id, pid)
 
+        # Living graph: contradictions/support surface as papers arrive, not only
+        # on a manual full-corpus pass. (After supersession, so a replaced preprint's
+        # claims are already out of the comparison set.)
+        if self.settings.incremental_contradictions and card.key_results:
+            await self._detect_relations_incremental(card)
+
     async def _apply_supersession(self, old_id: str, new_id: str) -> None:
         """Supersede ``old_id`` with ``new_id`` (preprint -> published version).
 
@@ -493,18 +500,11 @@ class IngestionService:
         return [c for c in cards if c.paper_id not in superseded]
 
     # ------------------------------------------------------------------ contradictions
-    async def analyze_relations(self, judge: NLIJudge | None = None) -> list[ClaimEdge]:
-        """Detect SUPPORTS/CONTRADICTS/EXTENDS relations across the corpus' claims.
-
-        Groups every card's key results into ClaimRecords keyed by concept, runs the
-        judge over same-concept cross-paper pairs, persists the resulting edges to
-        the graph, and mirrors them in memory for the API. Defaults to the offline
-        heuristic judge; pass an LLM judge in production.
-        """
-        judge = judge or HeuristicNLIJudge()
+    def _claim_records(self, cards: list[PaperCard]) -> list[ClaimRecord]:
+        """Flatten cards' key results into concept-keyed ClaimRecords for the judge."""
         ws = self.settings.workspace_id
         claims: list[ClaimRecord] = []
-        for card in await self._active_cards():
+        for card in cards:
             authors = frozenset(a.normalized_name for a in card.authors)
             concepts = card.domains or ["general"]
             for result in card.key_results:
@@ -520,6 +520,50 @@ class IngestionService:
                             evidence_location=result.evidence_location,
                         )
                     )
+        return claims
+
+    async def _detect_relations_incremental(self, card: PaperCard) -> None:
+        """Judge the new paper's claims against existing same-concept claims.
+
+        Runs at the end of every ingest (offline heuristic judge: free,
+        deterministic), so SUPPORTS/CONTRADICTS/EXTENDS edges accumulate as papers
+        arrive - the living graph - instead of waiting for a manual full-corpus
+        pass. Idempotent: graph writes are MERGEs and the in-memory mirror dedupes
+        by (source, target, relation).
+        """
+        existing_cards = [c for c in await self._active_cards() if c.paper_id != card.paper_id]
+        if not existing_cards:
+            return
+        report = await detect_relations_for(
+            self._claim_records([card]),
+            self._claim_records(existing_cards),
+            HeuristicNLIJudge(),
+        )
+        seen = {(e.source_id, e.target_id, str(e.relation)) for e in self._claim_relations}
+        added = 0
+        for edge in report.edges:
+            key = (edge.source_id, edge.target_id, str(edge.relation))
+            if key in seen:
+                continue
+            seen.add(key)
+            await self._writer.upsert_claim_relation(
+                edge.source_id, edge.target_id, str(edge.relation), edge.confidence
+            )
+            self._claim_relations.append(edge)
+            added += 1
+        if added:
+            log.info("contradictions.incremental", paper_id=card.paper_id, edges=added)
+
+    async def analyze_relations(self, judge: NLIJudge | None = None) -> list[ClaimEdge]:
+        """Detect SUPPORTS/CONTRADICTS/EXTENDS relations across the corpus' claims.
+
+        Groups every card's key results into ClaimRecords keyed by concept, runs the
+        judge over same-concept cross-paper pairs, persists the resulting edges to
+        the graph, and mirrors them in memory for the API. Defaults to the offline
+        heuristic judge; pass an LLM judge in production.
+        """
+        judge = judge or HeuristicNLIJudge()
+        claims = self._claim_records(await self._active_cards())
         report = await detect_relations(claims, judge)
         # Persist to the graph and mirror in memory (dedupe by id pair + relation).
         seen: set[tuple[str, str, str]] = set()
@@ -1252,10 +1296,20 @@ class IngestionService:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [f for _s, f in scored[: self.settings.similarity.candidate_k]]
 
+    #: Max vectors used for a calibrator refit. All-pairs over the whole corpus is
+    #: O(n^2) on EVERY ingest (O(n^3) across a backfill); the p5/p95 percentile
+    #: estimates converge long before ~2k pairs, so cap at 64 vectors (2016 pairs).
+    _CALIBRATION_VECS = 64
+
     def _fit_calibrator(self) -> CosineCalibrator:
         vecs = [f.specter for f in self._features.values() if f.specter is not None]
         if len(vecs) < 3:
             return CosineCalibrator()
+        if len(vecs) > self._CALIBRATION_VECS:
+            # Deterministic, evenly spaced subsample: reproducible for a given
+            # corpus, no RNG, and it spans early and late ingests alike.
+            step = len(vecs) / self._CALIBRATION_VECS
+            vecs = [vecs[int(i * step)] for i in range(self._CALIBRATION_VECS)]
         cosines: list[float] = []
         for i in range(len(vecs)):
             for j in range(i + 1, len(vecs)):

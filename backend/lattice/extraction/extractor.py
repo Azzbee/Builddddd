@@ -22,7 +22,7 @@ from pydantic import ValidationError
 
 from lattice.config import ExtractionSettings
 from lattice.core.cost import CostTracker
-from lattice.core.errors import SchemaValidationError
+from lattice.core.errors import CostCapExceeded, SchemaValidationError
 from lattice.core.llm import LLMClient, LLMMessage
 from lattice.core.logging import get_logger
 from lattice.extraction.prompts import load_prompt, prompt_hash
@@ -125,6 +125,40 @@ async def _call_with_repair(
     raise SchemaValidationError(f"extraction failed after {max_repair} repairs: {last_error[:300]}")
 
 
+async def _extract_content(
+    llm: LLMClient,
+    prompt: str,
+    settings: ExtractionSettings,
+    cost: CostTracker | None,
+) -> tuple[LLMPaperCardContent, str]:
+    """Primary-model extraction with a cross-provider fallback on transport failure.
+
+    A provider outage (timeout, 5xx, auth) should degrade to ``fallback_model`` -
+    a different provider family - not fail the job. Schema failures deliberately do
+    NOT trigger the fallback: they already get the repair loop, and a different
+    provider is no likelier to fix a prompt-shape problem. Cost-cap violations
+    always propagate (hard budget rail).
+    """
+    try:
+        content = await _call_with_repair(
+            llm, settings.primary_model, prompt, settings.max_repair_attempts, cost
+        )
+        return content, settings.primary_model
+    except (SchemaValidationError, CostCapExceeded):
+        raise
+    except Exception as exc:
+        log.warning(
+            "extraction.fallback",
+            error=str(exc)[:200],
+            primary=settings.primary_model,
+            fallback=settings.fallback_model,
+        )
+        content = await _call_with_repair(
+            llm, settings.fallback_model, prompt, settings.max_repair_attempts, cost
+        )
+        return content, settings.fallback_model
+
+
 async def extract_paper_card(
     *,
     identity: dict[str, object],
@@ -156,20 +190,35 @@ async def extract_paper_card(
         max_chars=settings.max_input_chars,
     )
 
-    model = settings.primary_model
-    content = await _call_with_repair(llm, model, prompt, settings.max_repair_attempts, cost)
+    content, model = await _extract_content(llm, prompt, settings, cost)
     dropped = _drop_unevidenced_results(content)
     conf = score_confidence(content, parse_confidence)
 
-    # Escalate once to a stronger model if confidence is low.
+    # Escalate once to a stronger model if confidence is low. Escalation is an
+    # improvement attempt over already-valid content, so any failure short of the
+    # cost cap degrades to keeping the primary extraction (flagged low-confidence)
+    # rather than failing the whole job.
     escalated = False
     if conf < settings.escalation_confidence:
         log.info("extraction.escalate", paper_id=identity.get("paper_id"), conf=conf)
-        model = settings.escalation_model
-        escalated = True
-        content = await _call_with_repair(llm, model, prompt, settings.max_repair_attempts, cost)
-        dropped += _drop_unevidenced_results(content)
-        conf = score_confidence(content, parse_confidence)
+        try:
+            escalated_content = await _call_with_repair(
+                llm, settings.escalation_model, prompt, settings.max_repair_attempts, cost
+            )
+        except CostCapExceeded:
+            raise
+        except Exception as exc:
+            log.warning(
+                "extraction.escalate_failed",
+                paper_id=identity.get("paper_id"),
+                error=str(exc)[:200],
+            )
+        else:
+            model = settings.escalation_model
+            escalated = True
+            content = escalated_content
+            dropped += _drop_unevidenced_results(content)
+            conf = score_confidence(content, parse_confidence)
 
     reasons: list[str] = []
     if conf < settings.review_confidence:

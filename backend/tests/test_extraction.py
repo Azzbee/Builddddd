@@ -258,3 +258,69 @@ async def test_extract_tracks_cost() -> None:
     )
     assert tracker.job_usage.cost_usd > 0
     assert tracker.job_usage.calls == 1
+
+
+class OutageThenScriptedLLM:
+    """Raises a transport error for the primary model; succeeds on any other."""
+
+    def __init__(self, good: str, failing_model: str) -> None:
+        self._good = good
+        self._failing = failing_model
+        self.models: list[str] = []
+
+    async def complete(self, model, messages: list[LLMMessage], **kwargs) -> LLMResponse:
+        self.models.append(model)
+        if model == self._failing:
+            raise RuntimeError("provider is down")
+        return LLMResponse(text=self._good, input_tokens=500, output_tokens=200, model=model)
+
+
+async def test_extract_falls_back_to_other_provider_on_outage() -> None:
+    settings = ExtractionSettings()
+    llm = OutageThenScriptedLLM(json.dumps(_content()), failing_model=settings.primary_model)
+    card = await extract_paper_card(
+        identity=_identity(), body="x", parse_confidence=1.0, llm=llm, settings=settings
+    )
+    assert card.extraction_model == settings.fallback_model
+    assert llm.models[0] == settings.primary_model  # tried the primary first
+    assert settings.fallback_model in llm.models
+
+
+async def test_extract_schema_failure_does_not_trigger_fallback() -> None:
+    # A prompt-shape problem gets the repair loop, never a provider switch.
+    settings = ExtractionSettings(max_repair_attempts=1)
+    llm = ScriptedLLM(["not json", "still not json"])
+    with pytest.raises(SchemaValidationError):
+        await extract_paper_card(
+            identity=_identity(), body="x", parse_confidence=1.0, llm=llm, settings=settings
+        )
+    assert all(m == settings.primary_model for m in llm.models)
+
+
+class EscalationOutageLLM:
+    """Valid (weak) content from the primary; transport error from the escalation."""
+
+    def __init__(self, weak: str, escalation_model: str) -> None:
+        self._weak = weak
+        self._escalation = escalation_model
+        self.models: list[str] = []
+
+    async def complete(self, model, messages: list[LLMMessage], **kwargs) -> LLMResponse:
+        self.models.append(model)
+        if model == self._escalation:
+            raise RuntimeError("provider is down")
+        return LLMResponse(text=self._weak, input_tokens=500, output_tokens=200, model=model)
+
+
+async def test_escalation_outage_keeps_primary_content() -> None:
+    # Escalation improves already-valid content; its failure must degrade to the
+    # primary extraction (flagged for review), not fail the whole job.
+    settings = ExtractionSettings()
+    weak = _content(self_confidence=0.1, key_results=[], contributions=[], datasets=[])
+    llm = EscalationOutageLLM(json.dumps(weak), settings.escalation_model)
+    card = await extract_paper_card(
+        identity=_identity(), body="x", parse_confidence=1.0, llm=llm, settings=settings
+    )
+    assert card.extraction_model == settings.primary_model  # primary content kept
+    assert card.confidence < settings.escalation_confidence  # still honestly low
+    assert settings.escalation_model in llm.models  # escalation was attempted

@@ -61,20 +61,37 @@ graph.
    (problem / methodology / results), and section-anchored chunk vectors into the
    vector store.
 5. **LINKING** - candidate generation (ANN), composite similarity, entity
-   resolution, idempotent graph writes, edge audit, citation edges. The paper is
-   now live in the graph.
+   resolution, idempotent graph writes, edge audit, citation edges, version
+   supersession, and incremental claim relations. The paper is now live in the
+   graph, with any contradictions it introduces already surfaced.
 
-Incremental linking keeps a per-paper feature pool (SPECTER vectors, method and
-dataset sets) and the entity-resolver registries in memory for O(k)-per-paper
-linking. Because those are lost on a process restart, the persistent path also
-stores each paper's SPECTER vector (`papers.specter`) and rehydrates the pool +
-resolver registries from Postgres once, before the first ingest of a process
-(`IngestionService.hydrate`). So a paper ingested after a restart still links
-against the whole corpus and reuses existing Method/Dataset nodes rather than
-minting duplicates. The methodology-section embedding and citation reference set
-are not persisted, so a rehydrated paper links on sem + method-tags + dataset; the
-similarity function renormalizes over the available components, so this degrades
-gracefully rather than dropping edges.
+Three living-graph behaviors happen inside linking:
+
+- **Incremental linking** keeps a per-paper feature pool (SPECTER + aspect
+  vectors, method and dataset sets) and the entity-resolver registries in memory
+  for O(k)-per-paper linking; the calibrator refit is bounded (a deterministic
+  subsample of vectors), so per-ingest cost stays flat as the corpus grows.
+  Because in-memory state is lost on restart, the persistent path stores the
+  SPECTER vector (`papers.specter`) and the aspect vectors (`papers.aspects`) and
+  rehydrates the pool + resolver registries once, before the first ingest of a
+  process (`IngestionService.hydrate`). Rehydrated papers link at full similarity
+  fidelity (sem + methodology-section + method-tags + dataset); only citation
+  reference sets are not persisted, and the weight function renormalizes over
+  available components, so that degrades gracefully rather than dropping edges.
+- **Version supersession.** A title-level dedup match with a preprint<->published
+  identifier asymmetry (arXiv-only vs DOI-bearing) is a new *version*, not a
+  duplicate: the published version ingests, a `SUPERSEDED_BY` edge records the
+  succession, every `RELATED_TO` edge touching the preprint is invalidated (both
+  directions, `invalid_at` set - never deleted), and the preprint leaves the
+  candidate pool, rehydration, analytics, and default views via the
+  `_active_cards()` seam so the same work is never counted twice. It remains
+  retrievable by id. An outdated preprint arriving after its published version is
+  rejected with a precise reason.
+- **Incremental contradiction detection.** The new paper's claims are judged
+  against existing same-concept claims (offline heuristic NLI, O(new x
+  same-concept)), so SUPPORTS/CONTRADICTS/EXTENDS edges accumulate as papers
+  arrive. `POST /contradictions/analyze` remains for full-corpus passes with the
+  LLM judge. Toggle: `LATTICE_INCREMENTAL_CONTRADICTIONS`.
 
 ## Component decisions
 

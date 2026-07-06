@@ -62,23 +62,34 @@ Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
 The production datastore code is no longer "written but unrun": a CI job spins up
 real Postgres+pgvector and Neo4j service containers and runs the live integration
 suite on every push (chunk ANN + hybrid search with monotonic fused scores,
-idempotent graph writes, an idempotent edge-audit trail, bi-temporal edges, claim
-relations, the Neo4j read paths, SPECTER-vector persistence + feature rehydration
-for cross-restart linking, and the Postgres card / job / watch / digest / PDF-blob
-stores). Backend coverage is ~92% with an 85% CI floor. Persistence is wired by
-`LATTICE_PERSISTENT` (on by default in docker-compose), and a `lattice` CLI
-provides serve/demo/ingest/query/eval.
+idempotent graph writes, an idempotent edge-audit trail, bi-temporal edges with
+both-direction supersession invalidation, claim relations, the Neo4j read paths,
+SPECTER + aspect-vector persistence with full-fidelity feature rehydration for
+cross-restart linking, superseded-paper exclusion from rehydration, and the
+Postgres card / job / watch / digest / PDF-blob stores). Backend coverage is ~92%
+with an 85% CI floor. Persistence is wired by `LATTICE_PERSISTENT` (on by default
+in docker-compose), and a `lattice` CLI provides serve/demo/ingest/query/eval.
+
+## Living-graph behaviors (wired at ingest time)
+
+- **Preprint -> published supersession.** A DOI-bearing published version of an
+  ingested arXiv preprint supersedes it instead of being rejected as a duplicate:
+  SUPERSEDED_BY edge, both-direction edge invalidation (never deletion), exclusion
+  from the candidate pool / rehydration / analytics / default views, retrievable
+  by id. The reverse arrival order is rejected with a precise reason.
+- **Incremental contradiction detection.** New papers' claims are judged against
+  existing same-concept claims at ingest (offline heuristic judge), so
+  CONTRADICTS/SUPPORTS/EXTENDS edges accumulate as the corpus grows;
+  `/contradictions/analyze` remains for full-corpus LLM-judged passes.
+- **Cross-provider extraction fallback.** A provider outage on the primary
+  extraction model retries once on `fallback_model` (a different provider
+  family); an escalation failure degrades to the valid primary content instead of
+  failing the job. Cost caps always propagate.
 
 ## Future work
 
 - GROBID/LLM end-to-end run in CI (needs a model key); both are thin/fixture-tested.
 - Optional Phase-2 domain-adapted embedding fine-tune (ship only if eval wins).
 - Unknown-unknowns proxies surfaced in the UI (question-coverage probing).
-- **Preprint -> published paper supersession.** `RELATED_TO` edges are already
-  bi-temporal (invalidated via `invalid_at`, never deleted) and cross-restart
-  incremental linking is wired. What is *not* yet wired is the paper-level
-  supersession heuristic (`detect_supersession` / `writer.set_superseded` +
-  `invalidate_related_edge`, both unit-tested): today the dedup stage rejects a DOI
-  -bearing published version of an existing arXiv preprint as a duplicate before
-  linking, so the SUPERSEDED_BY edge never fires. Wiring it means teaching dedup to
-  route a preprint<->published match into supersession instead of rejection.
+- Persist citation reference sets so cross-restart pairs regain bibliographic
+  coupling (the one remaining rehydration gap; weight renormalization covers it).

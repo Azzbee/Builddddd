@@ -83,33 +83,119 @@ class NLIJudge(Protocol):
 # Heuristic judge (deterministic, offline)
 # ---------------------------------------------------------------------------
 _POSITIVE = {
-    "improves", "improve", "improved", "outperforms", "outperform", "beats", "beat",
-    "better", "higher", "increase", "increases", "increased", "gains", "effective",
-    "significant", "significantly", "superior", "boosts", "enhances", "reduces",
-    "reduction", "lowers", "accurate", "wins", "exceeds", "positive",
+    "improves",
+    "improve",
+    "improved",
+    "outperforms",
+    "outperform",
+    "beats",
+    "beat",
+    "better",
+    "higher",
+    "increase",
+    "increases",
+    "increased",
+    "gains",
+    "effective",
+    "significant",
+    "significantly",
+    "superior",
+    "boosts",
+    "enhances",
+    "reduces",
+    "reduction",
+    "lowers",
+    "accurate",
+    "wins",
+    "exceeds",
+    "positive",
 }
 _NEGATIVE = {
-    "worse", "underperforms", "underperform", "decrease", "decreases", "decreased",
-    "ineffective", "fails", "fail", "inferior", "degrades", "harms", "negative",
-    "negligible", "insignificant", "weaker", "loses",
+    "worse",
+    "underperforms",
+    "underperform",
+    "decrease",
+    "decreases",
+    "decreased",
+    "ineffective",
+    "fails",
+    "fail",
+    "inferior",
+    "degrades",
+    "harms",
+    "negative",
+    "negligible",
+    "insignificant",
+    "weaker",
+    "loses",
 }
 _NEGATORS = {"no", "not", "never", "without", "neither", "nor", "fails", "lacks", "cannot"}
 _NULL_PHRASES = (
-    "no effect", "no significant", "not significant", "no improvement",
-    "does not", "did not", "fails to", "no benefit", "no difference",
+    "no effect",
+    "no significant",
+    "not significant",
+    "no improvement",
+    "does not",
+    "did not",
+    "fails to",
+    "no benefit",
+    "no difference",
 )
 _STOP = {
-    "the", "a", "an", "of", "for", "on", "in", "to", "and", "or", "with", "is", "are",
-    "was", "were", "we", "our", "that", "this", "than", "as", "by", "at", "it", "its",
-    "from", "using", "use", "used", "show", "shows", "showed", "find", "finds", "found",
-    "report", "reports", "results", "result", "method", "model", "models", "approach",
+    "the",
+    "a",
+    "an",
+    "of",
+    "for",
+    "on",
+    "in",
+    "to",
+    "and",
+    "or",
+    "with",
+    "is",
+    "are",
+    "was",
+    "were",
+    "we",
+    "our",
+    "that",
+    "this",
+    "than",
+    "as",
+    "by",
+    "at",
+    "it",
+    "its",
+    "from",
+    "using",
+    "use",
+    "used",
+    "show",
+    "shows",
+    "showed",
+    "find",
+    "finds",
+    "found",
+    "report",
+    "reports",
+    "results",
+    "result",
+    "method",
+    "model",
+    "models",
+    "approach",
 }
 _WORD = re.compile(r"[a-z0-9]+")
 
 
 def _content_tokens(text: str) -> set[str]:
     toks = _WORD.findall(normalize_text(text))
-    return {t for t in toks if t not in _STOP and t not in _POSITIVE and t not in _NEGATIVE and t not in _NEGATORS}
+    return {
+        t
+        for t in toks
+        if t not in _STOP and t not in _POSITIVE and t not in _NEGATIVE and t not in _NEGATORS
+    }
 
 
 def claim_polarity(text: str) -> int:
@@ -242,15 +328,34 @@ class RelationReport:
         return [e for e in self.edges if e.relation == ClaimRelation.SUPPORTS]
 
 
-async def detect_relations(
-    claims: list[ClaimRecord],
+def candidate_pairs_for(
+    new_claims: Iterable[ClaimRecord], existing: Iterable[ClaimRecord]
+) -> list[tuple[ClaimRecord, ClaimRecord]]:
+    """Pairs of (new, existing) claims sharing a concept, from different papers.
+
+    The incremental counterpart of :func:`candidate_pairs`: O(new x same-concept)
+    instead of O(corpus^2), so relation detection can run on every ingest and the
+    graph accumulates contradictions as papers arrive.
+    """
+    by_concept: dict[str, list[ClaimRecord]] = {}
+    for c in existing:
+        by_concept.setdefault(normalize_text(c.concept), []).append(c)
+    pairs: list[tuple[ClaimRecord, ClaimRecord]] = []
+    seen: set[tuple[str, str]] = set()
+    for n in new_claims:
+        for e in by_concept.get(normalize_text(n.concept), []):
+            if e.paper_id == n.paper_id or (n.claim_id, e.claim_id) in seen:
+                continue
+            seen.add((n.claim_id, e.claim_id))
+            pairs.append((n, e))
+    return pairs
+
+
+async def _judge_pairs(
+    pairs: list[tuple[ClaimRecord, ClaimRecord]],
     judge: NLIJudge,
-    *,
-    min_confidence: float = 0.5,
-    max_pairs: int = 2000,
+    min_confidence: float,
 ) -> RelationReport:
-    """Run the judge over candidate pairs and collect non-trivial relations."""
-    pairs = candidate_pairs(claims)[:max_pairs]
     edges: list[ClaimEdge] = []
     for a, b in pairs:
         relation, confidence = await judge.judge(a.text, b.text)
@@ -271,3 +376,27 @@ async def detect_relations(
             )
         )
     return RelationReport(edges=edges)
+
+
+async def detect_relations(
+    claims: list[ClaimRecord],
+    judge: NLIJudge,
+    *,
+    min_confidence: float = 0.5,
+    max_pairs: int = 2000,
+) -> RelationReport:
+    """Run the judge over candidate pairs and collect non-trivial relations."""
+    return await _judge_pairs(candidate_pairs(claims)[:max_pairs], judge, min_confidence)
+
+
+async def detect_relations_for(
+    new_claims: list[ClaimRecord],
+    existing: list[ClaimRecord],
+    judge: NLIJudge,
+    *,
+    min_confidence: float = 0.5,
+    max_pairs: int = 500,
+) -> RelationReport:
+    """Incremental detection: one paper's claims against the existing corpus."""
+    pairs = candidate_pairs_for(new_claims, existing)[:max_pairs]
+    return await _judge_pairs(pairs, judge, min_confidence)

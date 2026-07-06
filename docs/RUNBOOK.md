@@ -83,7 +83,11 @@ vars (nested with `__`, e.g. `LATTICE_SIMILARITY__ALPHA=0.45`). See `.env.exampl
 Key knobs:
 - `LATTICE_SIMILARITY__{ALPHA,BETA,GAMMA,DELTA,TAU}` - edge weights and threshold.
 - `LATTICE_COST__{PER_JOB_USD_CAP,DAILY_USD_CAP}` - spend caps (jobs pause at cap).
-- `LATTICE_EXTRACTION__{PRIMARY_MODEL,ESCALATION_MODEL}` - extraction models.
+- `LATTICE_EXTRACTION__{PRIMARY_MODEL,ESCALATION_MODEL,FALLBACK_MODEL}` - extraction
+  models; the fallback (a different provider family) is tried once when the
+  primary provider fails at the transport level (outage/timeout).
+- `LATTICE_INCREMENTAL_CONTRADICTIONS` - judge new papers' claims against the
+  corpus at ingest (default true; offline heuristic judge).
 - `LATTICE_AUTH_TOKEN` - single-user bearer token (auth is off if unset).
 
 ## Operations
@@ -116,6 +120,8 @@ cap is raised. Per-query cost is logged and returned in the agent result.
 | `scanned_pdf` | no text layer | job FAILED; needs OCR/vision path |
 | `paywalled_stub` | downloaded a landing page | job FAILED; obtain the real PDF |
 | `duplicate` | already in corpus | job DUPLICATE (no-op, idempotent) |
+| `duplicate` ("outdated preprint") | published version already ingested | job DUPLICATE; the corpus keeps the published version |
+| published version of an ingested preprint | version supersession | ingests + SUPERSEDED_BY; preprint's edges invalidated, out of analytics |
 | `parser_timeout` | GROBID slow | retryable; worker retries with backoff |
 | `cost_cap_exceeded` | spend cap hit | job PAUSED; resume after reset |
 | `rate_limited` | S2/OpenAlex throttling | cached + backoff; degrades to text-only similarity |

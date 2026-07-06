@@ -537,3 +537,94 @@ async def test_superseded_paper_stays_out_of_pool_after_restart() -> None:
     # Full-fidelity hydration: the methodology aspect vector survived the restart.
     assert svc2._features[pub.paper_id].methodology_embedding is not None
     assert pub.paper_id in svc2._aspects
+
+# --------------------------------------------------- incremental contradictions
+def _content_with_claim(methods: list[str], claim: str) -> str:
+    d = json.loads(_content(methods))
+    d["key_results"] = [{"claim": claim, "evidence_location": "Results, Table 2"}]
+    return json.dumps(d)
+
+
+async def test_contradiction_surfaces_incrementally_on_ingest() -> None:
+    # The living graph: paper B contradicts paper A, and the CONTRADICTS edge
+    # exists right after B's ingest - no manual /contradictions/analyze pass.
+    graph = FakeGraphStore()
+    docs = {
+        "a.pdf": _doc("LSTM improves copper forecasting", "LSTM", ["10.1/a"]),
+        "b.pdf": _doc("A critical replication of neural commodity models", "LSTM", ["10.1/b"]),
+    }
+    llm = ScriptedLLM(
+        [
+            _content_with_claim(
+                ["LSTM"], "LSTM significantly improves forecasting accuracy over ARIMA"
+            ),
+            _content_with_claim(
+                ["LSTM"], "LSTM shows no improvement in forecasting accuracy over ARIMA"
+            ),
+        ]
+    )
+    svc = _service(FakeParser(docs), llm, graph)
+    a = await svc.ingest_pdf("a.pdf", _pdf("A"))
+    assert a.status == JobStatus.SUCCEEDED
+    assert await svc.get_claim_relations("CONTRADICTS") == []  # nothing to clash with yet
+
+    b = await svc.ingest_pdf("b.pdf", _pdf("B"))
+    assert b.status == JobStatus.SUCCEEDED
+    contradictions = await svc.get_claim_relations("CONTRADICTS")
+    assert len(contradictions) == 1
+    edge = contradictions[0]
+    assert {edge.source_paper, edge.target_paper} == {a.paper_id, b.paper_id}
+    # Persisted to the graph as a first-class edge, not just mirrored.
+    assert any("CONTRADICTS" in q for q, _ in graph.calls)
+    # Re-running the incremental pass is idempotent in the mirror.
+    card_b = await svc.cards.get(b.paper_id)
+    assert card_b is not None
+    await svc._detect_relations_incremental(card_b)
+    assert len(await svc.get_claim_relations("CONTRADICTS")) == 1
+
+
+async def test_incremental_contradictions_can_be_disabled() -> None:
+    docs = {
+        "a.pdf": _doc("LSTM improves copper forecasting", "LSTM", ["10.1/a"]),
+        "b.pdf": _doc("A critical replication of neural commodity models", "LSTM", ["10.1/b"]),
+    }
+    llm = ScriptedLLM(
+        [
+            _content_with_claim(["LSTM"], "LSTM significantly improves forecasting accuracy"),
+            _content_with_claim(["LSTM"], "LSTM shows no improvement in forecasting accuracy"),
+        ]
+    )
+    svc = _service(FakeParser(docs), llm, FakeGraphStore())
+    svc.settings = svc.settings.model_copy(update={"incremental_contradictions": False})
+    await svc.ingest_pdf("a.pdf", _pdf("A"))
+    await svc.ingest_pdf("b.pdf", _pdf("B"))
+    assert await svc.get_claim_relations("CONTRADICTS") == []
+
+# ----------------------------------------------------------- calibrator sampling
+async def test_calibrator_refit_is_bounded_on_large_corpora(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # All-pairs calibration is O(n^2) on EVERY ingest; the refit must subsample.
+    import numpy as np
+    from lattice.graph.similarity import PaperFeatures
+    from lattice.ingestion import service as service_mod
+
+    svc = _service(FakeParser({}), ScriptedLLM([]), FakeGraphStore())
+    rng_vecs = [
+        np.array([1.0, float(i % 7), float(i % 3)], dtype=float) for i in range(500)
+    ]
+    for i, v in enumerate(rng_vecs):
+        svc._features[f"p{i}"] = PaperFeatures(paper_id=f"p{i}", specter=v)
+
+    calls = {"n": 0}
+    real_cosine = service_mod.cosine
+
+    def counting_cosine(a, b):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return real_cosine(a, b)
+
+    monkeypatch.setattr(service_mod, "cosine", counting_cosine)
+    calibrator = svc._fit_calibrator()
+    assert calibrator.fitted
+    cap = svc._CALIBRATION_VECS
+    assert calls["n"] <= cap * (cap - 1) // 2, "refit must be bounded, not all-pairs"
