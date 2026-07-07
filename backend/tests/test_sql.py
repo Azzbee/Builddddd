@@ -42,3 +42,27 @@ def test_store_queries_are_parameterized() -> None:
     for sql in ALL_SQL.values():
         assert "$1" in sql
         assert "%s" not in sql  # no printf-style formatting that could enable injection
+
+
+def test_vector_to_list_handles_every_codec_shape() -> None:
+    # pgvector-python 0.5.0 made Vector non-iterable (to_list() only); older
+    # versions hand back ndarray/list. An unpinned bump must not break rehydration.
+    import numpy as np
+    from lattice.db.pg_stores import _vector_to_list
+
+    assert _vector_to_list(None) is None
+    assert _vector_to_list([0.1, 0.2]) == [0.1, 0.2]
+    assert _vector_to_list(np.array([0.5, 1.5])) == [0.5, 1.5]
+
+    class VectorLike:  # pgvector >= 0.5.0 shape: no __iter__, has to_list()
+        def to_list(self) -> list[float]:
+            return [0.25, 0.75]
+
+    assert _vector_to_list(VectorLike()) == [0.25, 0.75]
+
+    try:
+        from pgvector import Vector  # exercise the real class when available
+    except ImportError:
+        pass
+    else:
+        assert _vector_to_list(Vector([0.1, 0.2])) is not None

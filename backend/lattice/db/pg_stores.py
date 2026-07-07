@@ -113,6 +113,21 @@ def _loads(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
+def _vector_to_list(value: Any) -> list[float] | None:
+    """Normalize a pgvector column value to a plain list of floats.
+
+    The codec's return type varies by pgvector-python version: ndarray/list in
+    older releases, a non-iterable ``Vector`` (with ``to_list()``) from 0.5.0.
+    Handle all of them so an unpinned dependency bump can't break rehydration.
+    """
+    if value is None:
+        return None
+    to_list = getattr(value, "to_list", None)
+    if callable(to_list):
+        return [float(x) for x in to_list()]
+    return [float(x) for x in value]
+
+
 class PgCardStore:  # pragma: no cover - exercised by integration tests
     def __init__(self, pool: Any, workspace_id: str = "default") -> None:
         self._pool = pool
@@ -181,9 +196,7 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
         out: list[StoredFeatures] = []
         for r in rows:
             card = PaperCard.model_validate(_loads(r["card"]))
-            spec = r["specter"]
-            # pgvector may hand back a Vector/ndarray or a list depending on codec.
-            specter = list(spec) if spec is not None else None
+            specter = _vector_to_list(r["specter"])
             aspects = _loads(r["aspects"]) if r["aspects"] is not None else None
             refs = _loads(r["reference_ids"]) if r["reference_ids"] is not None else None
             out.append(
