@@ -75,9 +75,10 @@ Three living-graph behaviors happen inside linking:
   SPECTER vector (`papers.specter`) and the aspect vectors (`papers.aspects`) and
   rehydrates the pool + resolver registries once, before the first ingest of a
   process (`IngestionService.hydrate`). Rehydrated papers link at full similarity
-  fidelity (sem + methodology-section + method-tags + dataset); only citation
-  reference sets are not persisted, and the weight function renormalizes over
-  available components, so that degrades gracefully rather than dropping edges.
+  fidelity: SPECTER (sem), methodology-section vectors (meth), method tags,
+  datasets, citation reference sets (`papers.reference_ids`, for bibliographic
+  coupling), and each paper's own external ids (DOI / arXiv / S2 / OpenAlex, for
+  direct-citation detection) all persist and restore. Nothing degrades on restart.
 - **Version supersession.** A title-level dedup match with a preprint<->published
   identifier asymmetry (arXiv-only vs DOI-bearing) is a new *version*, not a
   duplicate: the published version ingests, a `SUPERSEDED_BY` edge records the

@@ -450,7 +450,7 @@ async def test_published_version_supersedes_preprint() -> None:
     assert pre.paper_id != pub.paper_id  # two versions, two nodes
 
     # Store-level supersession flag.
-    assert await shared_cards.superseded_ids() == {pre.paper_id}
+    assert await shared_cards.superseded_map() == {pre.paper_id: pub.paper_id}
     # Graph-level: SUPERSEDED_BY edge written, preprint's edges invalidated.
     assert any("SUPERSEDED_BY" in q for q, _ in graph.calls)
     assert any(
@@ -486,7 +486,7 @@ async def test_outdated_preprint_rejected_when_published_exists() -> None:
     pre = await svc.ingest_pdf("pre.pdf", _pdf("PRE"))
     assert pre.status == JobStatus.DUPLICATE
     assert "outdated preprint" in (pre.error_message or "")
-    assert await shared_cards.superseded_ids() == set()  # nothing was ingested
+    assert await shared_cards.superseded_map() == {}  # nothing was ingested
 
 
 async def test_same_identifier_match_is_still_a_plain_duplicate() -> None:
@@ -628,3 +628,101 @@ async def test_calibrator_refit_is_bounded_on_large_corpora(
     assert calibrator.fitted
     cap = svc._CALIBRATION_VECS
     assert calls["n"] <= cap * (cap - 1) // 2, "refit must be bounded, not all-pairs"
+
+# --------------------------------------------------- citation ids + references
+class StubEnricher:
+    def __init__(self, extra: dict[str, object]) -> None:
+        self._extra = extra
+
+    async def enrich(self, card):  # type: ignore[no-untyped-def]
+        return dict(self._extra)
+
+
+async def test_openalex_reference_space_direct_citation() -> None:
+    # Paper A is known by its OpenAlex URL; paper B's references (as OpenAlex
+    # returns them: full URLs) include that URL. Direct-citation detection must
+    # match and write a CITES edge - this was structurally impossible before the
+    # paper's own openalex_id was captured.
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+    graph = FakeGraphStore()
+    docs = {
+        "a.pdf": _doc("LSTM copper forecasting", "LSTM attention", []),
+        "b.pdf": _doc("LSTM copper prediction citing A", "LSTM gru", []),
+    }
+    svc = _service(
+        FakeParser(docs),
+        ScriptedLLM([_content(["LSTM"]), _content(["LSTM", "GRU"])]),
+        graph,
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    svc.enricher = StubEnricher({"openalex_id": "https://openalex.org/W111"})
+    a = await svc.ingest_pdf("a.pdf", _pdf("A"))
+    # A's card carries its OpenAlex id and exposes it in the citation-id space.
+    card_a = await shared_cards.get(a.paper_id)
+    assert card_a is not None and card_a.openalex_id == "https://openalex.org/W111"
+    assert "https://openalex.org/W111" in card_a.external_ids
+
+    svc.enricher = StubEnricher({"reference_ids": ["https://openalex.org/W111"]})
+    b = await svc.ingest_pdf("b.pdf", _pdf("B"))
+    assert b.status == JobStatus.SUCCEEDED
+    assert any("CITES" in q for q, _ in graph.calls), "direct citation must be detected"
+    assert (b.paper_id, a.paper_id) in svc._cites
+
+
+async def test_references_and_external_ids_survive_restart() -> None:
+    # The FULL citation state now rehydrates: reference sets (bibliographic
+    # coupling) and external ids (direct-citation detection) both persist.
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+    docs1 = {"a.pdf": _doc("LSTM copper forecasting", "LSTM attention", [])}
+    svc1 = _service(
+        FakeParser(docs1),
+        ScriptedLLM([_content(["LSTM", "attention"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    svc1.enricher = StubEnricher(
+        {"reference_ids": ["DOI:10.1/lstm-orig"], "openalex_id": "https://openalex.org/W42"}
+    )
+    a = await svc1.ingest_pdf("a.pdf", _pdf("A"))
+
+    # Restart: fresh service, same stores; B's references cite A's OpenAlex URL.
+    graph2 = FakeGraphStore()
+    docs2 = {"b.pdf": _doc("LSTM copper prediction citing A", "LSTM gru", [])}
+    svc2 = _service(
+        FakeParser(docs2),
+        ScriptedLLM([_content(["LSTM", "GRU"])]),
+        graph2,
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    svc2.enricher = StubEnricher({"reference_ids": ["https://openalex.org/W42"]})
+    b = await svc2.ingest_pdf("b.pdf", _pdf("B"))
+    assert b.status == JobStatus.SUCCEEDED
+    # A's reference set and external ids were rehydrated from the store.
+    assert svc2._features[a.paper_id].references == {"DOI:10.1/lstm-orig"}
+    assert "https://openalex.org/W42" in svc2._external_ids[a.paper_id]
+    # And the cross-restart direct citation fired.
+    assert any("CITES" in q for q, _ in graph2.calls)
+
+
+async def test_entity_resolution_receives_embeddings() -> None:
+    # The ambiguous-band embedding tiebreak needs vectors at resolve time; the
+    # wiring must pass one for every method and dataset name.
+    docs = {"a.pdf": _doc("LSTM copper forecasting", "LSTM attention", [])}
+    svc = _service(FakeParser(docs), ScriptedLLM([_content(["LSTM"])]), FakeGraphStore())
+    seen: list[object] = []
+    assert svc.method_resolver is not None
+    real_resolve = svc.method_resolver.resolve
+
+    def spy(name: str, embedding=None):  # type: ignore[no-untyped-def]
+        seen.append(embedding)
+        return real_resolve(name, embedding=embedding)
+
+    svc.method_resolver.resolve = spy  # type: ignore[method-assign]
+    await svc.ingest_pdf("a.pdf", _pdf("A"))
+    assert seen, "methods were resolved"
+    assert all(e is not None for e in seen), "every resolution must carry an embedding"

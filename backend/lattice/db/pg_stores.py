@@ -18,8 +18,9 @@ from lattice.ingestion.models import IngestJob
 
 SQL_UPSERT_PAPER = """
 INSERT INTO papers (paper_id, workspace_id, title, authors, year, venue, doi, arxiv_id,
-                    s2_paper_id, card, confidence, needs_review, specter, aspects, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
+                    s2_paper_id, card, confidence, needs_review, specter, aspects,
+                    reference_ids, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
 ON CONFLICT (paper_id) DO UPDATE SET
     title = EXCLUDED.title, authors = EXCLUDED.authors, year = EXCLUDED.year,
     venue = EXCLUDED.venue, doi = EXCLUDED.doi, arxiv_id = EXCLUDED.arxiv_id,
@@ -27,6 +28,7 @@ ON CONFLICT (paper_id) DO UPDATE SET
     confidence = EXCLUDED.confidence, needs_review = EXCLUDED.needs_review,
     specter = COALESCE(EXCLUDED.specter, papers.specter),
     aspects = COALESCE(EXCLUDED.aspects, papers.aspects),
+    reference_ids = COALESCE(EXCLUDED.reference_ids, papers.reference_ids),
     updated_at = now()
 """
 
@@ -41,15 +43,16 @@ SQL_CORPUS_INDEX = (
 # linking at full similarity fidelity after a restart. Superseded papers are
 # excluded so they never re-enter the candidate pool.
 SQL_LOAD_FEATURES = (
-    "SELECT paper_id, card, specter, aspects FROM papers "
+    "SELECT paper_id, card, specter, aspects, reference_ids FROM papers "
     "WHERE workspace_id = $1 AND superseded_by IS NULL"
 )
 SQL_MARK_SUPERSEDED = (
     "UPDATE papers SET superseded_by = $3, updated_at = now() "
     "WHERE workspace_id = $1 AND paper_id = $2"
 )
-SQL_SUPERSEDED_IDS = (
-    "SELECT paper_id FROM papers WHERE workspace_id = $1 AND superseded_by IS NOT NULL"
+SQL_SUPERSEDED_MAP = (
+    "SELECT paper_id, superseded_by FROM papers "
+    "WHERE workspace_id = $1 AND superseded_by IS NOT NULL"
 )
 
 SQL_UPSERT_JOB = """
@@ -93,7 +96,7 @@ PG_STORE_SQL = {
     "corpus_index": SQL_CORPUS_INDEX,
     "load_features": SQL_LOAD_FEATURES,
     "mark_superseded": SQL_MARK_SUPERSEDED,
-    "superseded_ids": SQL_SUPERSEDED_IDS,
+    "superseded_map": SQL_SUPERSEDED_MAP,
     "upsert_job": SQL_UPSERT_JOB,
     "get_job": SQL_GET_JOB,
     "all_jobs": SQL_ALL_JOBS,
@@ -120,6 +123,7 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
         card: PaperCard,
         specter: list[float] | None = None,
         aspects: dict[str, list[float]] | None = None,
+        references: list[str] | None = None,
     ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -138,6 +142,7 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
                 card.needs_review,
                 specter,
                 json.dumps(aspects) if aspects is not None else None,
+                json.dumps(references) if references is not None else None,
             )
 
     async def get_card(self, paper_id: str) -> dict[str, Any] | None:
@@ -180,6 +185,7 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
             # pgvector may hand back a Vector/ndarray or a list depending on codec.
             specter = list(spec) if spec is not None else None
             aspects = _loads(r["aspects"]) if r["aspects"] is not None else None
+            refs = _loads(r["reference_ids"]) if r["reference_ids"] is not None else None
             out.append(
                 StoredFeatures(
                     paper_id=r["paper_id"],
@@ -187,6 +193,8 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
                     methods=card.normalized_methods,
                     datasets=card.normalized_datasets,
                     aspects=aspects if isinstance(aspects, dict) else None,
+                    references=frozenset(refs) if isinstance(refs, list) else frozenset(),
+                    external_ids=frozenset(card.external_ids),
                 )
             )
         return out
@@ -195,10 +203,10 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
         async with self._pool.acquire() as conn:
             await conn.execute(SQL_MARK_SUPERSEDED, self._ws, paper_id, superseded_by)
 
-    async def superseded_ids(self) -> set[str]:
+    async def superseded_map(self) -> dict[str, str]:
         async with self._pool.acquire() as conn:
-            rows = await conn.fetch(SQL_SUPERSEDED_IDS, self._ws)
-        return {r["paper_id"] for r in rows}
+            rows = await conn.fetch(SQL_SUPERSEDED_MAP, self._ws)
+        return {r["paper_id"]: r["superseded_by"] for r in rows}
 
 
 class PgJobStore:  # pragma: no cover - exercised by integration tests

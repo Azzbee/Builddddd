@@ -215,6 +215,7 @@ class PaperCard(BaseModel):
     doi: str | None = None
     arxiv_id: str | None = None
     s2_paper_id: str | None = None
+    openalex_id: str | None = None  # full OpenAlex URL form, matching reference ids
     abstract: str | None = None
 
     # --- LLM-extracted intellectual content ---
@@ -250,6 +251,26 @@ class PaperCard(BaseModel):
     @classmethod
     def _clamp_confidence(cls, v: float) -> float:
         return max(0.0, min(1.0, v))
+
+    @property
+    def external_ids(self) -> set[str]:
+        """Every id this paper is known by, in the same forms reference lists use.
+
+        This is the citation-id space for direct-citation detection: another
+        paper's ``references`` (DOIs from S2/Crossref, ``https://openalex.org/W...``
+        URLs from OpenAlex, S2 paper ids) intersect against this set. Each id keeps
+        its source's native form so the intersection actually matches.
+        """
+        ids: set[str] = set()
+        if self.doi:
+            ids.add(f"DOI:{self.doi}")
+        if self.arxiv_id:
+            ids.add(self.arxiv_id)
+        if self.s2_paper_id:
+            ids.add(self.s2_paper_id)
+        if self.openalex_id:
+            ids.add(self.openalex_id)
+        return ids
 
     @property
     def normalized_methods(self) -> set[str]:

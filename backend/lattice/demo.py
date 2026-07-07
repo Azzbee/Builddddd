@@ -29,6 +29,8 @@ class DemoPaper:
     results: list[tuple[str, str]]  # (claim, evidence_location)
     future_work: list[str]
     references: list[str]
+    doi: str | None = None
+    arxiv_id: str | None = None
 
 
 # A commodity-forecasting corpus with two communities (deep-learning vs
@@ -98,6 +100,26 @@ DEMO_CORPUS: list[DemoPaper] = [
         ["10.1/garch-orig"],
     ),
     DemoPaper(
+        "wavelet_preprint.pdf", "Wavelet Decomposition for Commodity Price Forecasting",
+        ["Elena Petrova", "Igor Volkov"], 2021, "commodity markets",
+        ["wavelets", "LSTM"], ["LME Copper"],
+        "Multi-scale decomposition may separate trend from noise in commodity prices.",
+        [("Wavelet-LSTM hybrids improve forecasting accuracy over plain LSTM", "Table 2")],
+        ["evaluate on longer horizons"],
+        ["10.1/lstm-orig"],
+        arxiv_id="2101.00001",
+    ),
+    DemoPaper(
+        "wavelet_published.pdf", "Wavelet Decomposition for Commodity Price Forecasting",
+        ["Elena Petrova", "Igor Volkov"], 2022, "commodity markets",
+        ["wavelets", "LSTM"], ["LME Copper"],
+        "Multi-scale decomposition may separate trend from noise in commodity prices.",
+        [("Wavelet-LSTM hybrids improve forecasting accuracy over plain LSTM", "Table 2")],
+        ["evaluate on longer horizons"],
+        ["10.1/lstm-orig"],
+        doi="10.5555/wavelet.2022",
+    ),
+    DemoPaper(
         "diffusion_supply.pdf", "Diffusion Models for Supply-Disruption Forecasting",
         ["Sofia Marin"], 2024, "commodity markets",
         ["diffusion models"], ["Custom Disruption Dataset"],
@@ -115,6 +137,8 @@ def _document(p: DemoPaper) -> ParsedDocument:
         authors=p.authors,
         abstract=f"{p.problem} We study {', '.join(p.methods)} on {', '.join(p.datasets)}.",
         year=p.year,
+        doi=p.doi,
+        arxiv_id=p.arxiv_id,
         sections=[
             ParsedSection(section_id="intro", title="Introduction", text=p.problem),
             ParsedSection(

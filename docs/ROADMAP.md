@@ -64,8 +64,8 @@ real Postgres+pgvector and Neo4j service containers and runs the live integratio
 suite on every push (chunk ANN + hybrid search with monotonic fused scores,
 idempotent graph writes, an idempotent edge-audit trail, bi-temporal edges with
 both-direction supersession invalidation, claim relations, the Neo4j read paths,
-SPECTER + aspect-vector persistence with full-fidelity feature rehydration for
-cross-restart linking, superseded-paper exclusion from rehydration, and the
+SPECTER + aspect-vector + citation-reference persistence with full-fidelity
+feature rehydration for cross-restart linking, superseded-paper exclusion from rehydration, and the
 Postgres card / job / watch / digest / PDF-blob stores). Backend coverage is ~92%
 with an 85% CI floor. Persistence is wired by `LATTICE_PERSISTENT` (on by default
 in docker-compose), and a `lattice` CLI provides serve/demo/ingest/query/eval.
@@ -91,5 +91,3 @@ in docker-compose), and a `lattice` CLI provides serve/demo/ingest/query/eval.
 - GROBID/LLM end-to-end run in CI (needs a model key); both are thin/fixture-tested.
 - Optional Phase-2 domain-adapted embedding fine-tune (ship only if eval wins).
 - Unknown-unknowns proxies surfaced in the UI (question-coverage probing).
-- Persist citation reference sets so cross-restart pairs regain bibliographic
-  coupling (the one remaining rehydration gap; weight renormalization covers it).

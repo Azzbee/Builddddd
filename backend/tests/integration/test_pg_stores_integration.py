@@ -217,8 +217,14 @@ async def test_aspects_persist_and_superseded_excluded_from_features(pool) -> No
     feats2 = {f.paper_id: f for f in await store.load_features()}
     assert feats2["p1"].aspects is not None
 
+    # References round-trip and external ids rebuild from the card.
+    await store.put_card(_card("p3", "Citing paper"), references=["https://openalex.org/W1"])
+    feats3 = {f.paper_id: f for f in await store.load_features()}
+    assert feats3["p3"].references == frozenset({"https://openalex.org/W1"})
+    assert "DOI:10.1/p3" in feats3["p3"].external_ids
+
     await store.mark_superseded("p1", "p2")
-    assert await store.superseded_ids() == {"p1"}
+    assert await store.superseded_map() == {"p1": "p2"}
     remaining = {f.paper_id for f in await store.load_features()}
-    assert remaining == {"p2"}, "superseded paper must not rehydrate"
+    assert remaining == {"p2", "p3"}, "superseded paper must not rehydrate"
     assert await store.get("p1") is not None  # supersede, never delete

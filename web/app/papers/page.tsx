@@ -42,6 +42,7 @@ export default function PapersPage() {
             <div className="flex items-start justify-between gap-2">
               <h2 className="text-sm font-medium text-white">{p.title}</h2>
               {p.needs_review && <span className="chip border-warn text-warn">review</span>}
+              {p.superseded_by && <span className="chip border-muted text-muted">superseded</span>}
             </div>
             <p className="mt-1 truncate text-xs text-muted">{p.authors.join(", ") || "unknown"}</p>
             <div className="mt-2 flex flex-wrap gap-1">

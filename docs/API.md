@@ -23,8 +23,8 @@ an optional `X-Workspace-Id` header (defaults to the configured workspace).
 ## Papers & graph
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/papers` | Card summaries |
-| GET | `/papers/{id}` | Full PaperCard |
+| GET | `/papers` | Card summaries (incl. `superseded_by` when a newer version exists) |
+| GET | `/papers/{id}` | Full PaperCard (incl. `superseded_by`; superseded versions stay retrievable) |
 | GET | `/papers/{id}/neighbors` | Weighted neighbors |
 | POST | `/papers/{id}/review` | Human-in-the-loop card corrections |
 | POST | `/papers/summarize` | `{ "paper_ids": [...] }` -> grounded brief for a selection (graph lasso) |

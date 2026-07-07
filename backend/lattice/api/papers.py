@@ -20,6 +20,7 @@ class SummarizeRequest(BaseModel):
 @router.get("")
 async def list_papers(c: Container = Depends(get_container)) -> list[dict[str, object]]:
     cards = await c.cards.all_cards()
+    superseded = await c.cards.superseded_map()
     return [
         {
             "paper_id": p.paper_id,
@@ -29,6 +30,9 @@ async def list_papers(c: Container = Depends(get_container)) -> list[dict[str, o
             "paper_type": str(p.paper_type),
             "confidence": p.confidence,
             "needs_review": p.needs_review,
+            # Superseded versions stay listed (supersede, never delete) so the UI
+            # can badge them and link to the successor.
+            "superseded_by": superseded.get(p.paper_id),
         }
         for p in cards
     ]
@@ -47,6 +51,8 @@ async def get_paper(paper_id: str, c: Container = Depends(get_container)) -> dic
     card = await c.cards.get_card(paper_id)
     if card is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "paper not found")
+    superseded = await c.cards.superseded_map()
+    card["superseded_by"] = superseded.get(paper_id)
     return card
 
 

@@ -187,3 +187,17 @@ def test_llm_content_to_card_merges_identity_and_meta() -> None:
     assert card.paper_type is PaperType.EMPIRICAL
     assert card.key_results[0].evidence_location == "Table 2"
     assert card.confidence == 0.8
+
+
+def test_external_ids_cover_every_citation_space() -> None:
+    card = PaperCard(
+        paper_id="p1",
+        title="t",
+        methodology=_methodology(),
+        doi="10.1/x",
+        arxiv_id="2101.00001",
+        s2_paper_id="s2abc",
+        openalex_id="https://openalex.org/W99",
+    )
+    assert card.external_ids == {"DOI:10.1/x", "2101.00001", "s2abc", "https://openalex.org/W99"}
+    assert PaperCard(paper_id="p2", title="t", methodology=_methodology()).external_ids == set()

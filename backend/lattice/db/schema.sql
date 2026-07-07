@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS papers (
     card            JSONB NOT NULL DEFAULT '{}',   -- full PaperCard
     specter         vector(768),
     aspects         JSONB,                          -- problem/methodology/results vectors
+    reference_ids   JSONB,                          -- external ids this paper cites (S_cit)
     superseded_by   TEXT,                           -- paper_id of the superseding version
     confidence      REAL,
     needs_review    BOOLEAN NOT NULL DEFAULT FALSE,
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS papers (
 -- Upgrade path for databases created before these columns existed (CREATE TABLE
 -- IF NOT EXISTS does not add columns to an existing table).
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS aspects JSONB;
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS reference_ids JSONB;
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS superseded_by TEXT;
 CREATE INDEX IF NOT EXISTS papers_workspace ON papers (workspace_id);
 CREATE INDEX IF NOT EXISTS papers_doi ON papers (doi);

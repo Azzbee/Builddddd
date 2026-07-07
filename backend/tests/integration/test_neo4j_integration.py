@@ -161,3 +161,11 @@ async def test_supersession_invalidates_edges_both_directions(store) -> None:  #
         "(:Paper {workspace_id:'itest', id:'pub'}) RETURN count(r) AS n"
     )
     assert sup[0]["n"] == 1
+
+    # Backend parity: the Neo4j reader hides superseded papers from the default
+    # snapshot, exactly like the in-memory _active_cards path.
+    from lattice.graph.reader import Neo4jGraphReader
+
+    snap = await Neo4jGraphReader(store).snapshot("itest")
+    ids = {n.id for n in snap.nodes}
+    assert "pre" not in ids and {"pub", "x"} <= ids

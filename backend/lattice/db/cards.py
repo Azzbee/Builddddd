@@ -20,10 +20,12 @@ class StoredFeatures(NamedTuple):
     """The persisted, per-paper feature bundle used to rehydrate incremental linking.
 
     Everything here survives a process restart: the SPECTER paper vector, the
-    normalized method/dataset sets, and the per-aspect embeddings (problem /
-    methodology / results). Rehydrated papers therefore link with full similarity
-    fidelity (sem + methodology-section + method-tags + dataset), and the epistemic
-    quadrants keep their aspect vectors across restarts.
+    normalized method/dataset sets, the per-aspect embeddings (problem /
+    methodology / results), the citation reference set, and the paper's own
+    external ids. Rehydrated papers therefore link at full similarity fidelity
+    (sem + methodology-section + method-tags + dataset + bibliographic coupling),
+    direct-citation detection keeps working, and the epistemic quadrants keep
+    their aspect vectors across restarts.
     """
 
     paper_id: str
@@ -31,6 +33,10 @@ class StoredFeatures(NamedTuple):
     methods: set[str]
     datasets: set[str]
     aspects: dict[str, list[float]] | None = None
+    #: External ids this paper cites (bibliographic coupling / direct citations).
+    references: frozenset[str] = frozenset()
+    #: Every id this paper is known by, in reference-list form (card.external_ids).
+    external_ids: frozenset[str] = frozenset()
 
 
 class CorpusStore(Protocol):
@@ -42,13 +48,14 @@ class CorpusStore(Protocol):
         card: PaperCard,
         specter: list[float] | None = None,
         aspects: dict[str, list[float]] | None = None,
+        references: list[str] | None = None,
     ) -> None: ...
     async def get(self, paper_id: str) -> PaperCard | None: ...
     async def all_cards(self) -> list[PaperCard]: ...
     async def corpus_index(self) -> CorpusIndex: ...
     async def load_features(self) -> list[StoredFeatures]: ...
     async def mark_superseded(self, paper_id: str, superseded_by: str) -> None: ...
-    async def superseded_ids(self) -> set[str]: ...
+    async def superseded_map(self) -> dict[str, str]: ...
 
 
 class JobStore(Protocol):
@@ -62,6 +69,7 @@ class InMemoryCardStore:
         self._cards: dict[str, PaperCard] = {}
         self._specters: dict[str, list[float] | None] = {}
         self._aspects: dict[str, dict[str, list[float]]] = {}
+        self._references: dict[str, list[str]] = {}
         self._superseded: dict[str, str] = {}  # paper_id -> superseding paper_id
 
     async def put_card(
@@ -69,12 +77,15 @@ class InMemoryCardStore:
         card: PaperCard,
         specter: list[float] | None = None,
         aspects: dict[str, list[float]] | None = None,
+        references: list[str] | None = None,
     ) -> None:
         self._cards[card.paper_id] = card
         if specter is not None:
             self._specters[card.paper_id] = specter
         if aspects is not None:
             self._aspects[card.paper_id] = aspects
+        if references is not None:
+            self._references[card.paper_id] = list(references)
 
     async def get_card(self, paper_id: str) -> dict[str, Any] | None:
         card = self._cards.get(paper_id)
@@ -97,6 +108,8 @@ class InMemoryCardStore:
                 methods=c.normalized_methods,
                 datasets=c.normalized_datasets,
                 aspects=self._aspects.get(c.paper_id),
+                references=frozenset(self._references.get(c.paper_id, [])),
+                external_ids=frozenset(c.external_ids),
             )
             for c in self._cards.values()
             if c.paper_id not in self._superseded
@@ -105,8 +118,9 @@ class InMemoryCardStore:
     async def mark_superseded(self, paper_id: str, superseded_by: str) -> None:
         self._superseded[paper_id] = superseded_by
 
-    async def superseded_ids(self) -> set[str]:
-        return set(self._superseded)
+    async def superseded_map(self) -> dict[str, str]:
+        """paper_id -> superseding paper_id, for every superseded paper."""
+        return dict(self._superseded)
 
     async def corpus_index(self) -> CorpusIndex:
         idents = [

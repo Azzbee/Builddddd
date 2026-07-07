@@ -142,6 +142,12 @@ def test_metrics_endpoint_records_requests(client: TestClient) -> None:
     assert "lattice_http_request_duration_seconds_bucket" in r.text
 
 
+def test_papers_list_carries_superseded_marker(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    items = client.get("/papers").json()
+    assert items and "superseded_by" in items[0] and items[0]["superseded_by"] is None
+
+
 def test_ingest_and_read_paper(client: TestClient) -> None:
     r = client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     assert r.status_code == 200, r.text

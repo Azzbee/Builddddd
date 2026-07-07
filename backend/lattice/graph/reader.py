@@ -51,7 +51,8 @@ class Neo4jGraphReader:
         node_rows = await self._store.execute(
             """
             MATCH (p:Paper {workspace_id: $ws})
-            WHERE $yr IS NULL OR (p.year IS NOT NULL AND p.year <= $yr)
+            WHERE p.superseded_by IS NULL
+              AND ($yr IS NULL OR (p.year IS NOT NULL AND p.year <= $yr))
             RETURN p.id AS id, p.title AS title, p.year AS year,
                    coalesce(p.community, 0) AS community,
                    coalesce(p.pagerank, 0.0) AS centrality,
@@ -142,7 +143,7 @@ class Neo4jGraphReader:
         node_rows = await self._store.execute(
             """
             MATCH (p:Paper {workspace_id: $ws})-[:USES_METHOD]->(m:Method)
-            WHERE toLower(m.name) = toLower($method)
+            WHERE toLower(m.name) = toLower($method) AND p.superseded_by IS NULL
             RETURN p.id AS id, p.title AS title, p.year AS year
             """,
             {"ws": workspace_id, "method": method},

@@ -6,6 +6,7 @@ export interface PaperSummary {
   paper_type: string;
   confidence: number;
   needs_review: boolean;
+  superseded_by?: string | null;
 }
 
 export interface ResultItem {
@@ -39,6 +40,7 @@ export interface PaperCard {
   year: number | null;
   venue: string | null;
   doi: string | null;
+  superseded_by?: string | null;
   arxiv_id: string | null;
   abstract: string | null;
   problem_statement: string;

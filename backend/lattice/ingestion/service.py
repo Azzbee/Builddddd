@@ -146,11 +146,10 @@ class IngestionService:
         first ingest. It is idempotent: papers already in the in-memory pool are
         kept, and superseded papers are excluded (load_features filters them).
 
-        Rehydrated papers link at full similarity fidelity (sem + methodology-section
-        + method-tags + dataset). The one component not persisted is the citation
-        reference set, so cross-restart pairs lack bibliographic coupling; the
-        similarity function renormalizes over available components, so this degrades,
-        never drops.
+        Rehydrated papers link at full similarity fidelity: SPECTER (sem),
+        methodology-section vectors (meth), method tags, datasets, citation
+        reference sets (S_cit bibliographic coupling), and external ids (direct-
+        citation detection) all persist and restore. Nothing degrades on restart.
         """
         if self._hydrated:
             return
@@ -183,7 +182,11 @@ class IngestionService:
                 methodology_embedding=(np.asarray(meth_vec, dtype=float) if meth_vec else None),
                 methods=feat.methods,
                 datasets=feat.datasets,
+                references=set(feat.references),
             )
+            if feat.external_ids:
+                # Direct-citation detection needs the candidate's own ids too.
+                self._external_ids.setdefault(feat.paper_id, set(feat.external_ids))
             if feat.aspects:
                 # Quadrants (cross-community transfer) survive restarts too.
                 self._aspects.setdefault(feat.paper_id, feat.aspects)
@@ -329,6 +332,10 @@ class IngestionService:
         ctx.extra.update(extra)
         if extra.get("s2_paper_id"):
             ctx.card.s2_paper_id = str(extra["s2_paper_id"])
+        if extra.get("openalex_id"):
+            # Keeps the paper matchable against OpenAlex-sourced reference lists
+            # (they cite by https://openalex.org/W... URL, not DOI).
+            ctx.card.openalex_id = str(extra["openalex_id"])
 
     async def _embed(self, ctx: PipelineContext) -> None:
         assert ctx.card is not None and ctx.document is not None
@@ -375,7 +382,7 @@ class IngestionService:
             references=refs,
             ingested_at=datetime.now(UTC),
         )
-        self._external_ids[pid] = _self_external_ids(card)
+        self._external_ids[pid] = card.external_ids
         self._aspects[pid] = aspects
 
     async def _link(self, ctx: PipelineContext) -> None:
@@ -404,12 +411,16 @@ class IngestionService:
         await self._writer.upsert_paper(card)
         for author in card.authors:
             await self._writer.upsert_author(author.name, pid, s2_id=author.s2_id)
-        for method in card.methods_taxonomy + card.methodology.techniques:
-            res = self.method_resolver.resolve(method)  # type: ignore[union-attr]
+        method_names = card.methods_taxonomy + card.methodology.techniques
+        method_embs = self.chunk_embedder.embed_texts(method_names) if method_names else []
+        for method, emb in zip(method_names, method_embs, strict=True):
+            res = self.method_resolver.resolve(method, embedding=emb)  # type: ignore[union-attr]
             await self._writer.upsert_method(res.key, res.name, pid)
-        for ds in card.datasets:
-            res = self.dataset_resolver.resolve(ds.name)  # type: ignore[union-attr]
-            await self._writer.upsert_dataset(res.key, ds.name, pid)
+        dataset_names = [ds.name for ds in card.datasets]
+        dataset_embs = self.chunk_embedder.embed_texts(dataset_names) if dataset_names else []
+        for ds_name, emb in zip(dataset_names, dataset_embs, strict=True):
+            res = self.dataset_resolver.resolve(ds_name, embedding=emb)  # type: ignore[union-attr]
+            await self._writer.upsert_dataset(res.key, ds_name, pid)
         for concept in card.domains:
             await self._writer.upsert_concept(
                 stable_id(self.settings.workspace_id, "concept", concept), concept, pid
@@ -444,7 +455,12 @@ class IngestionService:
         # incremental linking rehydrates at full similarity fidelity after a restart
         # (and the epistemic quadrants keep their aspect vectors).
         specter = new_feat.specter.tolist() if new_feat.specter is not None else None
-        await self.cards.put_card(card, specter=specter, aspects=self._aspects.get(pid))
+        await self.cards.put_card(
+            card,
+            specter=specter,
+            aspects=self._aspects.get(pid),
+            references=sorted(new_feat.references),
+        )
         # Persist the source PDF last (after the card exists, for the FK), so the
         # reader can open it and citations can deep-link to a page.
         if ctx.raw_pdf:
@@ -494,7 +510,7 @@ class IngestionService:
         bypass this - superseded papers remain retrievable, just not aggregated.
         """
         cards = await self.cards.all_cards()
-        superseded = await self.cards.superseded_ids()
+        superseded = await self.cards.superseded_map()
         if not superseded:
             return cards
         return [c for c in cards if c.paper_id not in superseded]
@@ -1330,12 +1346,3 @@ class IngestionService:
         return out
 
 
-def _self_external_ids(card: PaperCard) -> set[str]:
-    ids: set[str] = set()
-    if card.doi:
-        ids.add(f"DOI:{card.doi}")
-    if card.arxiv_id:
-        ids.add(card.arxiv_id)
-    if card.s2_paper_id:
-        ids.add(card.s2_paper_id)
-    return ids

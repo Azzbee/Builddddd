@@ -58,6 +58,11 @@ class CompositeEnricher:
             with contextlib.suppress(EnrichmentError):
                 work = await self._openalex.get_work(doi=card.doi)
                 out.setdefault("reference_ids", work.reference_ids)
+                if work.openalex_id:
+                    # The paper's own OpenAlex id, in the same URL form OpenAlex
+                    # reference lists use. Without it, direct-citation detection
+                    # can never match an OpenAlex-sourced reference to this paper.
+                    out["openalex_id"] = work.openalex_id
                 if work.concepts:
                     out["concepts"] = work.concepts
 

@@ -193,7 +193,8 @@ class GraphWriter:
             MATCH (old:Paper {workspace_id: $ws, id: $old})
             MATCH (new:Paper {workspace_id: $ws, id: $new})
             MERGE (old)-[r:SUPERSEDED_BY]->(new)
-            SET r.created_at = coalesce(r.created_at, $now)
+            SET r.created_at = coalesce(r.created_at, $now),
+                old.superseded_by = $new
             """,
             {"ws": self._ws, "old": superseded_id, "new": superseding_id, "now": _now()},
         )

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { PaperCard, PdfMeta } from "@/lib/types";
@@ -26,6 +27,15 @@ export default function PaperPage({ params }: { params: Promise<{ id: string }> 
   return (
     <article className="space-y-5">
       <header>
+        {card.superseded_by && (
+          <div className="mb-2 card border-warn text-sm text-warn">
+            This version has been superseded by the published version.{" "}
+            <Link href={`/papers/${card.superseded_by}`} className="underline">
+              Open the current version
+            </Link>
+            .
+          </div>
+        )}
         <h1 className="text-xl font-semibold text-white">{card.title}</h1>
         <p className="text-sm text-muted">
           {card.authors.map((a) => a.name).join(", ")} · {card.year ?? "?"}
