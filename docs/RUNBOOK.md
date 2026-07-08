@@ -28,6 +28,12 @@ make demo        # API in demo mode at :8000 (synthetic populated corpus)
 make web-dev     # web app at :3000, pointed at the demo API
 ```
 
+Note: to verify a production web build while the dev server is running, use
+`npm run build:check` (builds into `.next-build`). A plain `next build` shares
+`.next` with `next dev` and corrupts the running server's chunks ("Cannot find
+module './NNN.js'"); if that ever happens, stop the dev server, `rm -rf web/.next`,
+and restart it.
+
 Demo mode (`LATTICE_DEMO_MODE=true`) wires deterministic models and loads a small,
 deliberately interconnected corpus at startup, so the graph, contradictions,
 quadrants, momentum, lineage, and reading queue are all populated immediately.

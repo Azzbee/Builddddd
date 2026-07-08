@@ -19,6 +19,7 @@ uv.lock
 # Node / Next.js
 node_modules/
 .next/
+.next-build/
 out/
 web/.env*.local
 *.tsbuildinfo
