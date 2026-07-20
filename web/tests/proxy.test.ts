@@ -17,7 +17,9 @@ describe("API proxy", () => {
       method: "POST",
       headers: {
         authorization: "Bearer browser-controlled",
+        cookie: "session=browser-secret",
         "content-type": "application/json",
+        "x-forwarded-for": "198.51.100.1",
         "x-workspace-id": "research-2026",
       },
       body: JSON.stringify({ paper: "x" }),
@@ -34,7 +36,10 @@ describe("API proxy", () => {
     expect(String(url)).toBe("http://api:8000/ingest/file?source=ui");
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer server-secret");
+    expect(headers.get("cookie")).toBeNull();
+    expect(headers.get("x-forwarded-for")).toBeNull();
     expect(headers.get("x-workspace-id")).toBe("research-2026");
+    expect(init?.signal).toBe(request.signal);
     expect(new TextDecoder().decode(init?.body as ArrayBuffer)).toBe(
       '{"paper":"x"}',
     );
@@ -84,5 +89,41 @@ describe("API proxy", () => {
     await expect(response.json()).resolves.toEqual({
       detail: "backend unavailable",
     });
+  });
+
+  it("rejects an advertised oversized body before reading or forwarding it", async () => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const request = new Request("http://web.test/api/ingest/file", {
+      method: "POST",
+      headers: { "content-length": "1048577" },
+      body: "small",
+    });
+
+    const response = await proxyRequest(request, ["ingest", "file"], {
+      LATTICE_PROXY_MAX_BODY_MB: "1",
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      detail: "request body exceeds proxy limit",
+    });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body that exceeds the cap without a size header", async () => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const request = new Request("http://web.test/api/query", {
+      method: "POST",
+      body: "too large",
+    });
+
+    const response = await proxyRequest(request, ["query"], {
+      LATTICE_PROXY_MAX_BODY_MB: "0.000001",
+    });
+
+    expect(response.status).toBe(413);
+    expect(upstream).not.toHaveBeenCalled();
   });
 });

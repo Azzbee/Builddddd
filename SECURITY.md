@@ -16,6 +16,9 @@ for vulnerabilities. You will get an acknowledgement within a few days.
   `/api` route. The server removes browser-provided authorization and injects the
   bearer token from its private environment. The token is never sent in a
   JavaScript bundle, URL, local storage, or public environment variable.
+- **Proxy boundary**: the Next.js proxy forwards an explicit header allowlist,
+  cancels upstream work when the browser disconnects, and rejects request bodies
+  over `LATTICE_PROXY_MAX_BODY_MB` before forwarding them.
 - **CORS**: origins come from `LATTICE_CORS_ORIGINS`; production rejects a
   wildcard. The default permits only `http://localhost:3000`.
 - **Workspace isolation**: workspace IDs are validated before store lookup and
