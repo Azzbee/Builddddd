@@ -39,6 +39,7 @@ from lattice.ingestion.dispatch import (
     ArqIngestionDispatcher,
     IngestionDispatcher,
     InlineIngestionDispatcher,
+    JobQueue,
 )
 from lattice.ingestion.grobid_client import GrobidClient
 from lattice.ingestion.hybrid_parser import HybridParser
@@ -256,7 +257,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
     )
     dispatcher: IngestionDispatcher = InlineIngestionDispatcher(ingestion)
     if settings.persistent and _persist_redis is not None:
-        dispatcher = ArqIngestionDispatcher(ingestion, _persist_redis)
+        dispatcher = ArqIngestionDispatcher(ingestion, cast(JobQueue, _persist_redis))
     return Container(
         settings=settings,
         llm=llm,

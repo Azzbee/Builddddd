@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 from lattice.ingestion.models import IngestJob, JobStatus
 from lattice.ingestion.service import IngestionService
@@ -14,6 +14,17 @@ class IngestionDispatcher(Protocol):
 
     async def submit(self, source_ref: str, pdf_bytes: bytes) -> IngestJob: ...
     async def retry(self, job_id: str) -> IngestJob | None: ...
+
+
+class JobQueue(Protocol):
+    async def enqueue_job(
+        self,
+        function: str,
+        workspace_id: str,
+        job_id: str,
+        *,
+        _job_id: str,
+    ) -> object: ...
 
 
 @dataclass
@@ -33,7 +44,7 @@ class ArqIngestionDispatcher:
     """Persist inputs first, then enqueue only small identifiers in Redis."""
 
     service: IngestionService
-    redis: Any
+    redis: JobQueue
     asynchronous: bool = True
 
     async def submit(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
