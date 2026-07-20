@@ -180,12 +180,17 @@ with exponential delay until the same cap.
 
 ### Backups (nightly)
 ```bash
-# Neo4j
-docker compose exec neo4j neo4j-admin database dump neo4j --to-stdout > neo4j-$(date +%F).dump
-# Postgres
-docker compose exec -T postgres pg_dump -U lattice lattice | gzip > pg-$(date +%F).sql.gz
+BACKUP_DIR=/mnt/storage RETAIN_DAYS=14 scripts/backup.sh
 ```
-Ship both to a Hetzner Storage Box. Restore by loading the dump and `psql < gunzip`.
+The script pauses the API and worker, writes a PostgreSQL custom archive, stops
+Neo4j for the Community Edition offline dump, includes both `neo4j` and `system`,
+validates every archive, and restarts only services that were running. Expect a
+brief write outage. It publishes completed files atomically with mode `0600` in a
+mode `0700` directory and prevents overlapping runs.
+
+Ship all three files to a Hetzner Storage Box. Test a restore regularly with
+`pg_restore` and `neo4j-admin database load`; a backup is not proven until a
+restore drill succeeds.
 
 ## Observability
 - Structured JSON logs (structlog) to stdout; ship to your log stack.

@@ -51,4 +51,4 @@ for vulnerabilities. You will get an acknowledgement within a few days.
 - Put the API behind TLS (Cloudflare Tunnel or a reverse proxy).
 - Set an explicit `LATTICE_CORS_ORIGINS` list for the deployed web origin.
 - Keep `LATTICE_MAX_WORKSPACES` bounded for the available memory.
-- Run nightly backups (`scripts/backup.sh`).
+- Run nightly validated backups (`scripts/backup.sh`) and schedule restore drills.
