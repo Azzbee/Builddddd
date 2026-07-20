@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: help up down logs ps build seed ingest test eval lint typecheck fmt check db-schema web-dev api-dev
+.PHONY: help up down logs ps build seed ingest test web-test eval lint typecheck fmt format-check web-build audit check db-schema web-dev api-dev
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -10,7 +10,7 @@ help: ## Show this help
 
 up: ## Bring up the full stack (neo4j, postgres, redis, grobid, api, worker, web)
 	$(COMPOSE) up -d --build
-	@echo "API:   http://localhost:8000/health"
+	@echo "API:   http://localhost:8000/readyz"
 	@echo "Web:   http://localhost:3000"
 	@echo "Neo4j: http://localhost:7474"
 
@@ -32,12 +32,15 @@ db-schema: ## Apply the Postgres schema
 seed: ## Pull ~20 arXiv commodity-forecasting papers into the corpus
 	cd backend && uv run python ../scripts/seed_corpus.py
 
-ingest: ## Ingest a local PDF: make ingest FILE=path/to/paper.pdf
+ingest: ## Ingest a local PDF: make ingest FILE=paper.pdf TOKEN=secret
 	@test -n "$(FILE)" || (echo "usage: make ingest FILE=paper.pdf" && exit 1)
-	curl -sS -F "file=@$(FILE)" http://localhost:8000/ingest/file | python3 -m json.tool
+	curl -sS -H "Authorization: Bearer $(TOKEN)" -F "file=@$(FILE)" http://localhost:8000/ingest/file | python3 -m json.tool
 
 test: ## Run the backend test suite (offline; integration tests skip)
 	cd backend && uv run pytest
+
+web-test: ## Run the frontend unit tests
+	cd web && npm run test
 
 test-integration: ## Run live integration tests (needs LATTICE_TEST_PG_DSN / LATTICE_TEST_NEO4J_URI)
 	cd backend && uv run pytest -m integration -v
@@ -55,8 +58,19 @@ typecheck: ## mypy (backend) + tsc (web)
 
 fmt: ## Auto-format / fix
 	cd backend && uv run ruff check --fix . && uv run ruff format .
+	cd web && npm run format
 
-check: lint typecheck test ## Run lint + typecheck + tests
+format-check: ## Check backend and frontend formatting
+	cd backend && uv run ruff format --check .
+	cd web && npm run format:check
+
+web-build: ## Build the web app into its verification directory
+	cd web && npm run build:check
+
+audit: ## Audit frontend production and development dependencies
+	cd web && npm audit --audit-level=moderate
+
+check: format-check lint typecheck test web-test web-build ## Run the local verification gate
 
 api-dev: ## Run the API locally with reload
 	cd backend && uv run uvicorn lattice.api.app:app --reload

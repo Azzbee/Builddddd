@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend (ruff, mypy, pytest)
+    name: Backend (format, lint, typecheck, test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -27,7 +27,9 @@ jobs:
       - name: Install dependencies
         run: uv pip install -e ".[dev,api]"
       - name: Ruff
-        run: uv run ruff check .
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
       - name: Mypy
         run: uv run mypy lattice
       - name: Pytest
@@ -95,7 +97,7 @@ jobs:
         run: uv run pytest -m integration -v
 
   web:
-    name: Web (lint, typecheck, build)
+    name: Web (format, lint, test, typecheck, build, audit)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -107,7 +109,10 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci || npm install
-      - run: npm run lint --if-present
-      - run: npm run typecheck --if-present
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run typecheck
       - run: npm run build
+      - run: npm audit --audit-level=moderate
