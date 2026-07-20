@@ -41,3 +41,46 @@ def test_persistent_branch_wires_pg_and_neo4j() -> None:
 async def test_init_persistence_noop_when_disabled() -> None:
     await deps.init_persistence(Settings(persistent=False))
     assert deps._persist_pool is None
+
+
+class FakeConnection:
+    async def fetchval(self, query: str) -> int:
+        assert query == "SELECT 1"
+        return 1
+
+
+class FakeAcquireContext:
+    async def __aenter__(self) -> FakeConnection:
+        return FakeConnection()
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+class FakePool:
+    def acquire(self) -> FakeAcquireContext:
+        return FakeAcquireContext()
+
+
+class FakeRedis:
+    async def ping(self) -> bool:
+        return True
+
+
+async def test_persistence_health_probes_all_backends() -> None:
+    deps._persist_pool = FakePool()
+    deps._persist_graph = FakeGraphStore({"RETURN 1": [{"ok": 1}]})
+    deps._persist_redis = FakeRedis()
+
+    checks = await deps.persistence_health(Settings(persistent=True))
+
+    assert checks == {"postgres": True, "neo4j": True, "redis": True}
+
+
+async def test_persistence_health_marks_missing_backend_unready() -> None:
+    deps._persist_pool = FakePool()
+    deps._persist_graph = FakeGraphStore({"RETURN 1": [{"ok": 1}]})
+
+    checks = await deps.persistence_health(Settings(persistent=True))
+
+    assert checks == {"postgres": True, "neo4j": True, "redis": False}

@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     rate_limit_per_min: int = 240  # per-client request cap; 0 disables
     max_upload_mb: int = 50  # reject PDF uploads larger than this
     ingest_max_attempts: int = 3
+    readiness_timeout_s: float = 2.0
     #: Judge a new paper's claims against existing same-concept claims at ingest
     #: time (offline heuristic judge), so contradictions surface as papers arrive.
     #: The /contradictions/analyze endpoint remains for full-corpus (LLM) passes.

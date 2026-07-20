@@ -8,9 +8,11 @@ Tests override the container via :func:`set_container`.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Protocol, cast
 
 from fastapi import Header, HTTPException, status
 
@@ -85,6 +87,66 @@ class Container:
 _persist_pool: object | None = None
 _persist_graph: GraphStore | None = None
 _persist_redis: object | None = None
+
+
+class _PgConnection(Protocol):
+    async def fetchval(self, query: str) -> object: ...
+
+
+class _PgAcquireContext(Protocol):
+    async def __aenter__(self) -> _PgConnection: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None: ...
+
+
+class _PgPool(Protocol):
+    def acquire(self) -> _PgAcquireContext: ...
+
+
+class _RedisPool(Protocol):
+    async def ping(self) -> object: ...
+
+
+async def persistence_health(settings: Settings | None = None) -> dict[str, bool]:
+    """Probe every dependency required by a persistent API process."""
+    settings = settings or get_settings()
+    if not settings.persistent:
+        return {"postgres": True, "neo4j": True, "redis": True}
+
+    async def postgres_ready() -> bool:
+        if _persist_pool is None:
+            return False
+        async with cast(_PgPool, _persist_pool).acquire() as connection:
+            return await connection.fetchval("SELECT 1") == 1
+
+    async def neo4j_ready() -> bool:
+        if _persist_graph is None:
+            return False
+        rows = await _persist_graph.execute("RETURN 1 AS ok")
+        return bool(rows and rows[0].get("ok") == 1)
+
+    async def redis_ready() -> bool:
+        if _persist_redis is None:
+            return False
+        return bool(await cast(_RedisPool, _persist_redis).ping())
+
+    async def bounded(probe: Callable[[], Awaitable[bool]]) -> bool:
+        try:
+            return await asyncio.wait_for(probe(), timeout=settings.readiness_timeout_s)
+        except Exception:
+            return False
+
+    postgres, neo4j, redis = await asyncio.gather(
+        bounded(postgres_ready),
+        bounded(neo4j_ready),
+        bounded(redis_ready),
+    )
+    return {"postgres": postgres, "neo4j": neo4j, "redis": redis}
 
 
 def build_container(settings: Settings | None = None, workspace_id: str | None = None) -> Container:

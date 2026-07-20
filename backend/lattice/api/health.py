@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 
 from lattice import __version__
-from lattice.api.deps import list_workspaces, require_auth
+from lattice.api.deps import list_workspaces, persistence_health, require_auth
 
 router = APIRouter(tags=["health"])
 
@@ -21,7 +21,9 @@ async def health() -> dict[str, str]:
 
 
 @router.get("/readyz")
-async def ready() -> dict[str, str]:
-    # Liveness only here; deep readiness checks (Neo4j/PG/Redis pings) belong in
-    # the worker/ops layer. The API serving requests is itself the signal.
-    return {"status": "ready"}
+async def ready(response: Response) -> dict[str, str | dict[str, bool]]:
+    checks = await persistence_health()
+    is_ready = all(checks.values())
+    if not is_ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {"status": "ready" if is_ready else "not_ready", "checks": checks}

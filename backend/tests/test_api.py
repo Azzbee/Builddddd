@@ -118,6 +118,27 @@ def test_health(client: TestClient) -> None:
     assert r.json()["status"] == "ok"
 
 
+def test_readiness_reports_dependency_checks(client: TestClient) -> None:
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "checks": {"postgres": True, "neo4j": True, "redis": True},
+    }
+
+
+def test_readiness_returns_503_when_a_dependency_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def failed_check() -> dict[str, bool]:
+        return {"postgres": True, "neo4j": False, "redis": True}
+
+    monkeypatch.setattr("lattice.api.health.persistence_health", failed_check)
+    response = TestClient(create_app()).get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+
+
 def test_rate_limiting_returns_429(monkeypatch: pytest.MonkeyPatch) -> None:
     from lattice.config import get_settings
 
