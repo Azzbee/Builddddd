@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 from lattice.api.app import create_app
 from lattice.api.deps import Container, set_container
@@ -202,6 +204,57 @@ def test_ingest_and_read_paper(client: TestClient) -> None:
     card = client.get(f"/papers/{pid}").json()
     assert card["title"].startswith("Paper")
     assert card["key_results"][0]["evidence_location"] == "Results"
+
+
+@respx.mock
+def test_arxiv_ingest_streams_a_valid_pdf(client: TestClient) -> None:
+    respx.get("https://arxiv.org/pdf/2401.01234.pdf").mock(
+        return_value=httpx.Response(200, content=_pdf("arxiv"))
+    )
+
+    response = client.post("/ingest/arxiv", json={"arxiv_id": "2401.01234"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+
+
+@respx.mock
+def test_arxiv_ingest_rejects_oversized_stream(client: TestClient) -> None:
+    from lattice.api.deps import get_container
+
+    container = get_container("default")
+    container.settings = container.settings.model_copy(update={"max_upload_mb": 1})
+    respx.get("https://arxiv.org/pdf/2401.01234.pdf").mock(
+        return_value=httpx.Response(200, content=b"%PDF-1.7\n" + b"x" * (1024 * 1024))
+    )
+
+    response = client.post("/ingest/arxiv", json={"arxiv_id": "2401.01234"})
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "remote PDF is too large"}
+    assert client.get("/ingest/jobs").json() == []
+
+
+@respx.mock
+def test_arxiv_ingest_rejects_oversized_content_length_before_read(
+    client: TestClient,
+) -> None:
+    from lattice.api.deps import get_container
+
+    container = get_container("default")
+    container.settings = container.settings.model_copy(update={"max_upload_mb": 1})
+    respx.get("https://arxiv.org/pdf/2401.01234.pdf").mock(
+        return_value=httpx.Response(
+            200,
+            headers={"content-length": str(2 * 1024 * 1024)},
+            content=b"%PDF-1.7\nsmall",
+        )
+    )
+
+    response = client.post("/ingest/arxiv", json={"arxiv_id": "2401.01234"})
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "remote PDF is too large"}
 
 
 def test_pdf_storage_and_streaming(client: TestClient) -> None:

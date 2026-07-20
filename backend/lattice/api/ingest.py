@@ -16,6 +16,25 @@ class ArxivRequest(BaseModel):
     arxiv_id: str
 
 
+async def _read_bounded_response(response: httpx.Response, cap: int) -> bytes:
+    """Read a remote response without allowing it to exceed ``cap`` bytes."""
+    content_length = response.headers.get("content-length")
+    if content_length is not None:
+        try:
+            advertised_size = int(content_length)
+        except ValueError:
+            advertised_size = None
+        if advertised_size is not None and advertised_size > cap:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "remote PDF is too large")
+
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > cap:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "remote PDF is too large")
+    return bytes(body)
+
+
 async def _submit(c: Container, source_ref: str, pdf: bytes, response: Response) -> IngestJob:
     assert c.dispatcher is not None
     try:
@@ -63,11 +82,16 @@ async def ingest_arxiv(
     if not arxiv_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid arxiv id")
     url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    cap = c.settings.max_upload_mb * 1024 * 1024
     try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            resp = await client.get(url)
+        async with (
+            httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client,
+            client.stream("GET", url) as resp,
+        ):
             resp.raise_for_status()
-            pdf = resp.content
+            pdf = await _read_bounded_response(resp, cap)
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"arxiv fetch failed: {exc}") from exc
     job = await _submit(c, f"arxiv:{arxiv_id}", pdf, response)
