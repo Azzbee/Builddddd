@@ -188,6 +188,7 @@ class IngestJob(BaseModel):
     status: JobStatus = JobStatus.QUEUED
     error_code: str | None = None
     error_message: str | None = None
+    retryable: bool = False
     attempts: int = 0
     cost_usd: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

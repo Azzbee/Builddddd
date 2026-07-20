@@ -73,6 +73,7 @@ class SchemaValidationError(ExtractionError):
     """LLM output failed schema validation after all repair attempts."""
 
     code = "schema_validation_failed"
+    retryable = True
 
 
 # ---------------------------------------------------------------------------

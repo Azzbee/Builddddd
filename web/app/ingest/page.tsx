@@ -38,6 +38,7 @@ export default function IngestPage() {
   const [jobs, setJobs] = useState<IngestJob[]>([]);
   const [arxiv, setArxiv] = useState("");
   const [busy, setBusy] = useState(false);
+  const [retryingJobId, setRetryingJobId] = useState<string>();
   const [msg, setMsg] = useState<string>();
 
   const refresh = useCallback(() => {
@@ -60,13 +61,27 @@ export default function IngestPage() {
     setMsg(undefined);
     try {
       const job = await api.ingestFile(file);
-      setMsg(`Ingested ${file.name}: ${job.status}`);
+      setMsg(`Submitted ${file.name}: ${job.status}`);
       refresh();
     } catch (err) {
       setMsg(`Failed: ${String(err)}`);
     } finally {
       setBusy(false);
       e.target.value = "";
+    }
+  }
+
+  async function onRetry(job: IngestJob) {
+    setRetryingJobId(job.job_id);
+    setMsg(undefined);
+    try {
+      const updated = await api.retryJob(job.job_id);
+      setMsg(`Retry submitted for ${job.source_ref}: ${updated.status}`);
+      refresh();
+    } catch (err) {
+      setMsg(`Retry failed: ${String(err)}`);
+    } finally {
+      setRetryingJobId(undefined);
     }
   }
 
@@ -137,24 +152,43 @@ export default function IngestPage() {
                 key={j.job_id}
                 className="rounded-md border border-border bg-panel2 p-3"
               >
-                <div className="mb-2 flex items-center justify-between text-xs">
-                  <span className="font-mono text-muted">
-                    {j.paper_id ?? j.job_id.slice(0, 8)}
-                  </span>
-                  <span
-                    className={
-                      j.status === "succeeded"
-                        ? "text-good"
-                        : j.status === "failed"
-                          ? "text-bad"
-                          : "text-warn"
-                    }
-                  >
-                    {j.status}
-                    {j.error_code ? ` (${j.error_code})` : ""}
-                  </span>
+                <div className="mb-2 flex items-start justify-between gap-3 text-xs">
+                  <div className="min-w-0">
+                    <div className="truncate text-ink">{j.source_ref}</div>
+                    <div className="font-mono text-muted">
+                      {j.paper_id ?? j.job_id.slice(0, 8)} · attempts{" "}
+                      {j.attempts}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span
+                      className={
+                        j.status === "succeeded"
+                          ? "text-good"
+                          : j.status === "failed"
+                            ? "text-bad"
+                            : "text-warn"
+                      }
+                    >
+                      {j.status}
+                      {j.error_code ? ` (${j.error_code})` : ""}
+                    </span>
+                    {j.retryable &&
+                      (j.status === "failed" || j.status === "paused") && (
+                        <button
+                          className="btn py-1 text-xs"
+                          onClick={() => onRetry(j)}
+                          disabled={retryingJobId === j.job_id}
+                        >
+                          {retryingJobId === j.job_id ? "Retrying" : "Retry"}
+                        </button>
+                      )}
+                  </div>
                 </div>
                 <StageBadges job={j} />
+                {j.error_message && (
+                  <p className="mt-2 text-xs text-bad">{j.error_message}</p>
+                )}
               </li>
             ))}
           </ul>

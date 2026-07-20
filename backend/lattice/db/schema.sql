@@ -67,11 +67,13 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
     status        TEXT NOT NULL,
     error_code    TEXT,
     error_message TEXT,
+    retryable     BOOLEAN NOT NULL DEFAULT FALSE,
     attempts      INT NOT NULL DEFAULT 0,
     cost_usd      REAL NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE ingest_jobs ADD COLUMN IF NOT EXISTS retryable BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS jobs_status ON ingest_jobs (status);
 
 -- Inputs and stage outputs required to continue an ingest after a worker restart.

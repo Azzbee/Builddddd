@@ -126,6 +126,7 @@ async def test_job_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
         stage=JobStage.LINKING,
         status=JobStatus.SUCCEEDED,
         paper_id="p1",
+        retryable=True,
         attempts=1,
         cost_usd=0.12,
     )
@@ -133,6 +134,7 @@ async def test_job_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
     got = await store.get("j1")
     assert got is not None and got.status == JobStatus.SUCCEEDED and got.paper_id == "p1"
     assert got.stage == JobStage.LINKING
+    assert got.retryable is True
     assert len(await store.all_jobs()) == 1
 
 

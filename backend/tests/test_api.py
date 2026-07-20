@@ -256,6 +256,10 @@ def test_ingest_bad_pdf_fails_gracefully(client: TestClient) -> None:
     job = r.json()
     assert job["status"] == "failed"
     assert job["error_code"] == "corrupted_pdf"
+    assert job["retryable"] is False
+    retry = client.post(f"/ingest/jobs/{job['job_id']}/retry")
+    assert retry.status_code == 409
+    assert retry.json()["detail"] == "job failure corrupted_pdf is not retryable"
 
 
 def test_graph_and_jobs(client: TestClient) -> None:

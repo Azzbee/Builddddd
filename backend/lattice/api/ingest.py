@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from lattice.api.deps import Container, get_container, require_auth
 from lattice.core.hashing import normalize_arxiv
+from lattice.ingestion.dispatch import JobRetryRejected
 from lattice.ingestion.models import IngestJob
 
 router = APIRouter(prefix="/ingest", tags=["ingest"], dependencies=[Depends(require_auth)])
@@ -93,7 +94,10 @@ async def retry_job(
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
     assert c.dispatcher is not None
-    job = await c.dispatcher.retry(job_id)
+    try:
+        job = await c.dispatcher.retry(job_id)
+    except JobRetryRejected as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
     response.status_code = (

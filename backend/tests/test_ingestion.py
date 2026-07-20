@@ -278,6 +278,7 @@ async def test_pipeline_cost_cap_pauses_resumably() -> None:
     ctx = PipelineContext(job=_job())
     job = await pipe.run(ctx)
     assert job.status == JobStatus.PAUSED
+    assert job.retryable is True
     assert job.stage == JobStage.PARSING  # completed parse, paused before extract
     assert job.error_code == "cost_cap_exceeded"
 
@@ -302,4 +303,5 @@ async def test_pipeline_failure_records_code() -> None:
     job = await pipe.run(PipelineContext(job=_job()))
     assert job.status == JobStatus.FAILED
     assert job.error_code == "corrupted_pdf"
+    assert job.retryable is False
     assert job.attempts == 1

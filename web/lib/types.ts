@@ -193,9 +193,21 @@ export interface ResearchProposal {
 
 export interface IngestJob {
   job_id: string;
+  source_ref: string;
   paper_id: string | null;
-  stage: string;
-  status: string;
+  stage:
+    | "received"
+    | "parsing"
+    | "extracting"
+    | "enriching"
+    | "embedding"
+    | "linking"
+    | "done";
+  status:
+    "queued" | "running" | "paused" | "failed" | "duplicate" | "succeeded";
   error_code: string | null;
+  error_message: string | null;
+  retryable: boolean;
+  attempts: number;
   progress?: number;
 }

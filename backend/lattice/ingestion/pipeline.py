@@ -85,9 +85,12 @@ class IngestionPipeline:
         """Advance the job until it reaches a terminal or paused state."""
         job = ctx.job
         if job.status in (JobStatus.PAUSED, JobStatus.FAILED):
-            if job.attempts >= self._max_attempts:
+            if not job.retryable or job.attempts >= self._max_attempts:
                 return job
             job.status = JobStatus.QUEUED
+            job.error_code = None
+            job.error_message = None
+            job.retryable = False
         await self._persist(job)
         while not job.is_terminal:
             target = next_stage(job.stage)
@@ -110,6 +113,7 @@ class IngestionPipeline:
                 job.status = JobStatus.DUPLICATE
                 job.error_code = exc.code
                 job.error_message = str(exc)
+                job.retryable = False
                 if not job.paper_id:
                     job.paper_id = ctx.extra.get("duplicate_of")  # type: ignore[assignment]
                 await self._persist(job)
@@ -119,6 +123,7 @@ class IngestionPipeline:
                 job.status = JobStatus.PAUSED
                 job.error_code = exc.code
                 job.error_message = str(exc)
+                job.retryable = True
                 await self._persist(job)
                 log.warning("ingest.paused", job_id=job.job_id, stage=target, reason=exc.code)
                 break
@@ -126,6 +131,7 @@ class IngestionPipeline:
                 job.attempts += 1
                 job.error_code = exc.code
                 job.error_message = str(exc)
+                job.retryable = exc.retryable
                 job.status = JobStatus.FAILED
                 await self._persist(job)
                 log.error(
@@ -145,6 +151,7 @@ class IngestionPipeline:
                 job.stage = target
                 job.error_code = None
                 job.error_message = None
+                job.retryable = False
                 if self._artifact_store is not None:
                     await self._artifact_store.save_context(ctx)
                 await self._persist(job)

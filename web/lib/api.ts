@@ -138,6 +138,8 @@ export const api = {
       approve,
     }),
   jobs: () => get<IngestJob[]>("/ingest/jobs"),
+  retryJob: (jobId: string) =>
+    post<IngestJob>(`/ingest/jobs/${encodeURIComponent(jobId)}/retry`, {}),
   ingestArxiv: (arxiv_id: string) =>
     post<IngestJob>("/ingest/arxiv", { arxiv_id }),
   async ingestFile(file: File): Promise<IngestJob> {

@@ -27,6 +27,19 @@ class JobQueue(Protocol):
     ) -> object: ...
 
 
+class JobRetryRejected(ValueError):
+    """A job cannot be requeued in its current persisted state."""
+
+
+def _validate_retry(job: IngestJob, max_attempts: int) -> None:
+    if job.status not in (JobStatus.FAILED, JobStatus.PAUSED):
+        raise JobRetryRejected(f"job status {job.status} cannot be retried")
+    if not job.retryable:
+        raise JobRetryRejected(f"job failure {job.error_code or 'unknown'} is not retryable")
+    if job.attempts >= max_attempts:
+        raise JobRetryRejected(f"job reached the attempt limit ({max_attempts})")
+
+
 @dataclass
 class InlineIngestionDispatcher:
     service: IngestionService
@@ -36,6 +49,10 @@ class InlineIngestionDispatcher:
         return await self.service.ingest_pdf(source_ref, pdf_bytes)
 
     async def retry(self, job_id: str) -> IngestJob | None:
+        job = await self.service.jobs.get(job_id)
+        if job is None:
+            return None
+        _validate_retry(job, self.service.settings.ingest_max_attempts)
         return await self.service.resume_job(job_id)
 
 
@@ -58,10 +75,7 @@ class ArqIngestionDispatcher:
         job = await self.service.jobs.get(job_id)
         if job is None:
             return None
-        if job.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
-            return job
-        if job.attempts >= self.service.settings.ingest_max_attempts:
-            return job
+        _validate_retry(job, self.service.settings.ingest_max_attempts)
         job.status = JobStatus.QUEUED
         job.error_code = None
         job.error_message = None

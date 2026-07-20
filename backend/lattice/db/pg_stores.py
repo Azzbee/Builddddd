@@ -58,13 +58,14 @@ SQL_SUPERSEDED_MAP = (
 
 SQL_UPSERT_JOB = """
 INSERT INTO ingest_jobs (job_id, workspace_id, source_type, source_ref, content_hash,
-                         paper_id, stage, status, error_code, error_message, attempts,
-                         cost_usd, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
+                         paper_id, stage, status, error_code, error_message, retryable,
+                         attempts, cost_usd, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
 ON CONFLICT (job_id) DO UPDATE SET
     content_hash = EXCLUDED.content_hash, paper_id = EXCLUDED.paper_id,
     stage = EXCLUDED.stage, status = EXCLUDED.status, error_code = EXCLUDED.error_code,
-    error_message = EXCLUDED.error_message, attempts = EXCLUDED.attempts,
+    error_message = EXCLUDED.error_message, retryable = EXCLUDED.retryable,
+    attempts = EXCLUDED.attempts,
     cost_usd = EXCLUDED.cost_usd, updated_at = now()
 """
 
@@ -244,6 +245,7 @@ class PgJobStore:  # pragma: no cover - exercised by integration tests
                 str(job.status),
                 job.error_code,
                 job.error_message,
+                job.retryable,
                 job.attempts,
                 job.cost_usd,
                 job.created_at,
@@ -325,6 +327,7 @@ def _row_to_job(row: Any) -> IngestJob:
         status=row["status"],
         error_code=row["error_code"],
         error_message=row["error_message"],
+        retryable=row["retryable"],
         attempts=row["attempts"],
         cost_usd=row["cost_usd"],
         created_at=row["created_at"],
