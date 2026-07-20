@@ -22,9 +22,14 @@ def _low_watch_floor(monkeypatch: pytest.MonkeyPatch):
 
 
 async def _demo_ctx() -> dict[str, object]:
-    container = build_container(Settings(demo_mode=True))
+    settings = Settings(demo_mode=True)
+    container = build_container(settings)
     await load_demo(container)
-    return {"container": container}
+    return {
+        "container": container,
+        "settings": settings,
+        "containers": {settings.workspace_id: container},
+    }
 
 
 class FakeWatcher:
@@ -79,10 +84,14 @@ async def test_generate_weekly_digest_persists() -> None:
     assert await ctx["container"].digests.latest() is not None  # type: ignore[attr-defined]
 
 
-async def test_ingest_pdf_task_runs() -> None:
+async def test_ingest_job_task_runs_from_staged_source() -> None:
     import lattice.worker as worker
     from lattice.demo import demo_pdf_bytes
 
     ctx = await _demo_ctx()
-    result = await worker.ingest_pdf_task(ctx, "lstm_copper.pdf", demo_pdf_bytes("lstm_copper.pdf"))
+    container = ctx["container"]
+    job = await container.ingestion.stage_pdf(  # type: ignore[attr-defined]
+        "new-paper.pdf", demo_pdf_bytes("lstm_copper.pdf")
+    )
+    result = await worker.ingest_job_task(ctx, "default", job.job_id)
     assert result["status"] in ("succeeded", "duplicate")

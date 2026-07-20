@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
 
 from lattice.api.deps import Container, get_container, require_auth
@@ -15,15 +15,20 @@ class ArxivRequest(BaseModel):
     arxiv_id: str
 
 
-async def _run_and_store(c: Container, source_ref: str, pdf: bytes) -> IngestJob:
-    job = await c.ingestion.ingest_pdf(source_ref, pdf)
-    await c.jobs.save(job)
+async def _submit(c: Container, source_ref: str, pdf: bytes, response: Response) -> IngestJob:
+    assert c.dispatcher is not None
+    job = await c.dispatcher.submit(source_ref, pdf)
+    response.status_code = (
+        status.HTTP_202_ACCEPTED if c.dispatcher.asynchronous else status.HTTP_200_OK
+    )
     return job
 
 
 @router.post("/file")
 async def ingest_file(
-    file: UploadFile = File(...), c: Container = Depends(get_container)
+    response: Response,
+    file: UploadFile = File(...),
+    c: Container = Depends(get_container),
 ) -> dict[str, object]:
     # Reject oversized uploads before buffering the whole body (DoS guard).
     cap = c.settings.max_upload_mb * 1024 * 1024
@@ -40,13 +45,15 @@ async def ingest_file(
             413,
             f"file exceeds {c.settings.max_upload_mb} MB limit",
         )
-    job = await _run_and_store(c, file.filename or "upload.pdf", data)
+    job = await _submit(c, file.filename or "upload.pdf", data, response)
     return job.model_dump(mode="json")
 
 
 @router.post("/arxiv")
 async def ingest_arxiv(
-    req: ArxivRequest, c: Container = Depends(get_container)
+    req: ArxivRequest,
+    response: Response,
+    c: Container = Depends(get_container),
 ) -> dict[str, object]:
     arxiv_id = normalize_arxiv(req.arxiv_id)
     if not arxiv_id:
@@ -59,14 +66,16 @@ async def ingest_arxiv(
             pdf = resp.content
     except httpx.HTTPError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"arxiv fetch failed: {exc}") from exc
-    job = await _run_and_store(c, f"arxiv:{arxiv_id}", pdf)
+    job = await _submit(c, f"arxiv:{arxiv_id}", pdf, response)
     return job.model_dump(mode="json")
 
 
 @router.get("/jobs")
 async def list_jobs(c: Container = Depends(get_container)) -> list[dict[str, object]]:
     jobs = await c.jobs.all_jobs()
-    return [j.model_dump(mode="json") for j in sorted(jobs, key=lambda j: j.created_at, reverse=True)]
+    return [
+        j.model_dump(mode="json") for j in sorted(jobs, key=lambda j: j.created_at, reverse=True)
+    ]
 
 
 @router.get("/jobs/{job_id}")
@@ -74,4 +83,20 @@ async def get_job(job_id: str, c: Container = Depends(get_container)) -> dict[st
     job = await c.jobs.get(job_id)
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+    return job.model_dump(mode="json")
+
+
+@router.post("/jobs/{job_id}/retry")
+async def retry_job(
+    job_id: str,
+    response: Response,
+    c: Container = Depends(get_container),
+) -> dict[str, object]:
+    assert c.dispatcher is not None
+    job = await c.dispatcher.retry(job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+    response.status_code = (
+        status.HTTP_202_ACCEPTED if c.dispatcher.asynchronous else status.HTTP_200_OK
+    )
     return job.model_dump(mode="json")

@@ -18,6 +18,7 @@ def _reset_persist():
     yield
     deps._persist_pool = None
     deps._persist_graph = None
+    deps._persist_redis = None
 
 
 def test_in_memory_by_default() -> None:

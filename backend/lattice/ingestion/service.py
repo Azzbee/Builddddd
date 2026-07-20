@@ -208,26 +208,34 @@ class IngestionService:
 
     async def ingest_pdf(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
         await self.hydrate()
+        job = await self.stage_pdf(source_ref, pdf_bytes)
+        if job.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
+            return job
+        saved = await self.artifacts.get(job.job_id)
+        ctx = PipelineContext(job=job, raw_pdf=pdf_bytes)
+        if saved is not None:
+            saved.restore(ctx)
+            ctx.raw_pdf = ctx.raw_pdf or pdf_bytes
+        return await self._run_context(ctx)
+
+    async def stage_pdf(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
+        """Persist a deterministic queued job and its source without processing it."""
         digest = content_hash(pdf_bytes)
         job_id = stable_id("job", self.settings.workspace_id, source_ref, digest)
         existing = await self.jobs.get(job_id)
-        if existing is not None and existing.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
+        if existing is not None:
             return existing
-        job = existing or IngestJob(
+        job = IngestJob(
             job_id=job_id,
             workspace_id=self.settings.workspace_id,
             source_type=SourceType.FILE,
             source_ref=source_ref,
             content_hash=digest,
         )
-        saved = await self.artifacts.get(job_id)
         ctx = PipelineContext(job=job, raw_pdf=pdf_bytes)
-        if saved is not None:
-            saved.restore(ctx)
-            ctx.raw_pdf = ctx.raw_pdf or pdf_bytes
         await self.jobs.save(job)
         await self.artifacts.save_context(ctx)
-        return await self._run_context(ctx)
+        return job
 
     async def resume_job(self, job_id: str) -> IngestJob | None:
         """Resume a persisted paused or failed job from its last completed stage."""

@@ -17,18 +17,27 @@ from lattice.enrichment.arxiv_watcher import ArxivWatcher
 log = get_logger("worker")
 
 
-async def ingest_pdf_task(ctx: dict[str, Any], source_ref: str, pdf_bytes: bytes) -> dict[str, Any]:
-    container: Container = ctx["container"]
-    job = await container.ingestion.ingest_pdf(source_ref, pdf_bytes)
-    await container.jobs.save(job)
+def _container(ctx: dict[str, Any], workspace_id: str) -> Container:
+    containers: dict[str, Container] = ctx["containers"]
+    if workspace_id not in containers:
+        containers[workspace_id] = build_container(ctx["settings"], workspace_id=workspace_id)
+    return containers[workspace_id]
+
+
+async def ingest_job_task(ctx: dict[str, Any], workspace_id: str, job_id: str) -> dict[str, Any]:
+    container = _container(ctx, workspace_id)
+    job = await container.ingestion.resume_job(job_id)
+    if job is None:
+        raise RuntimeError(f"ingest job not found: {job_id}")
     result: dict[str, Any] = job.model_dump(mode="json")
     return result
 
 
 async def poll_arxiv(ctx: dict[str, Any]) -> int:
     """Cron: fetch recent arXiv papers, score against the corpus, queue matches."""
-    container: Container = ctx["container"]
     settings = get_settings()
+    container = _container(ctx, settings.workspace_id)
+    await container.ingestion.hydrate()
     watcher = ArxivWatcher(settings.enrichment)
     try:
         results = await watcher.fetch_recent(settings.watcher.arxiv_categories, max_results=50)
@@ -57,7 +66,8 @@ async def poll_arxiv(ctx: dict[str, Any]) -> int:
 
 async def generate_weekly_digest(ctx: dict[str, Any]) -> dict[str, Any]:
     """Cron: build and persist the weekly delta digest."""
-    container: Container = ctx["container"]
+    settings = get_settings()
+    container = _container(ctx, settings.workspace_id)
     payload = await container.ingestion.generate_digest()
     await container.digests.add(payload)
     return payload
@@ -69,11 +79,15 @@ async def startup(ctx: dict[str, Any]) -> None:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
     await init_persistence(settings)  # share Postgres/Neo4j with the API in prod
-    ctx["container"] = build_container(settings)
+    ctx["settings"] = settings
+    ctx["containers"] = {}
     log.info("worker.started", persistent=settings.persistent)
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
+    from lattice.api.deps import shutdown_persistence
+
+    await shutdown_persistence()
     log.info("worker.stopped")
 
 
@@ -91,10 +105,11 @@ def _cron_jobs() -> list[Any]:
 class WorkerSettings:
     """arq entrypoint: ``arq lattice.worker.WorkerSettings``."""
 
-    functions = [ingest_pdf_task, poll_arxiv, generate_weekly_digest]
+    functions = [ingest_job_task, poll_arxiv, generate_weekly_digest]
     on_startup = startup
     on_shutdown = shutdown
     cron_jobs = _cron_jobs()
+    max_tries = get_settings().ingest_max_attempts
 
     @staticmethod
     def redis_settings() -> Any:  # pragma: no cover - needs redis

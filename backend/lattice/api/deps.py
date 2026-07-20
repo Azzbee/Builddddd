@@ -32,6 +32,11 @@ from lattice.embeddings.base import make_text_embedder
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
 from lattice.embeddings.specter2 import Specter2Embedder
 from lattice.graph.store import FakeGraphStore, GraphStore
+from lattice.ingestion.dispatch import (
+    ArqIngestionDispatcher,
+    IngestionDispatcher,
+    InlineIngestionDispatcher,
+)
 from lattice.ingestion.grobid_client import GrobidClient
 from lattice.ingestion.service import IngestionService, Parser
 from lattice.rag.agent import RagAgent
@@ -52,12 +57,15 @@ class Container:
     digests: DigestStore
     blobs: BlobStore
     artifacts: IngestArtifactStore = field(default_factory=InMemoryIngestArtifactStore)
+    dispatcher: IngestionDispatcher | None = None
 
     def __post_init__(self) -> None:
         # Manual containers in tests and integrations must share the same durable
         # job state as their ingestion service, just like build_container does.
         self.ingestion.jobs = self.jobs
         self.ingestion.artifacts = self.artifacts
+        if self.dispatcher is None:
+            self.dispatcher = InlineIngestionDispatcher(self.ingestion)
 
     def make_agent(self) -> RagAgent:
         toolbox = Toolbox(
@@ -74,6 +82,7 @@ class Container:
 # Shared persistent resources (created once at startup when settings.persistent).
 _persist_pool: object | None = None
 _persist_graph: GraphStore | None = None
+_persist_redis: object | None = None
 
 
 def build_container(settings: Settings | None = None, workspace_id: str | None = None) -> Container:
@@ -172,6 +181,9 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         aspect_embedder=aspect_embedder,
         text_extractor=text_extractor,
     )
+    dispatcher: IngestionDispatcher = InlineIngestionDispatcher(ingestion)
+    if settings.persistent and _persist_redis is not None:
+        dispatcher = ArqIngestionDispatcher(ingestion, _persist_redis)
     return Container(
         settings=settings,
         llm=llm,
@@ -185,16 +197,20 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         watch=watch,
         digests=digests,
         blobs=blobs,
+        dispatcher=dispatcher,
     )
 
 
 async def init_persistence(settings: Settings | None = None) -> None:
     """Create the shared Postgres pool + Neo4j store and apply schemas. Idempotent."""
-    global _persist_pool, _persist_graph
+    global _persist_pool, _persist_graph, _persist_redis
     settings = settings or get_settings()
     if not settings.persistent or _persist_pool is not None:
         return
     from pathlib import Path
+
+    from arq import create_pool
+    from arq.connections import RedisSettings
 
     from lattice.db.vector import create_pg_pool
     from lattice.graph.schema import apply_schema
@@ -212,18 +228,23 @@ async def init_persistence(settings: Settings | None = None) -> None:
     await apply_schema(neo4j)
     _persist_pool = pool
     _persist_graph = neo4j
+    _persist_redis = await create_pool(RedisSettings.from_dsn(settings.redis.url))
 
 
 async def shutdown_persistence() -> None:
-    global _persist_pool, _persist_graph
+    global _persist_pool, _persist_graph, _persist_redis
     pool = _persist_pool
     if pool is not None and hasattr(pool, "close"):
         await pool.close()
     graph = _persist_graph
     if graph is not None and hasattr(graph, "close"):
         await graph.close()
+    redis = _persist_redis
+    if redis is not None and hasattr(redis, "aclose"):
+        await redis.aclose()
     _persist_pool = None
     _persist_graph = None
+    _persist_redis = None
 
 
 # A test override (takes precedence over the registry) plus a per-workspace
