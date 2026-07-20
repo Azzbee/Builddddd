@@ -166,12 +166,10 @@ class IngestionService:
         async with self._hydrate_lock:
             if self._hydrated:
                 return
-            try:
-                stored = await self.cards.load_features()
-            except Exception as exc:  # persistence hiccup: run with what's in memory
-                log.warning("hydrate.failed", error=str(exc))
-                self._hydrated = True  # don't retry-loop on every ingest
-                return
+            # Fail closed if the corpus cannot be loaded. Continuing with an empty
+            # candidate pool would make the next paper permanently miss links to
+            # pre-restart papers. The worker retry calls hydrate again.
+            stored = await self.cards.load_features()
             self._populate_from_features(stored)
             self._hydrated = True
             log.info("hydrate.done", papers=len(stored))

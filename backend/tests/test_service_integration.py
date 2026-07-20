@@ -273,6 +273,50 @@ async def test_concurrent_hydrate_loads_exactly_once() -> None:
     assert seed_pid in svc._features
 
 
+async def test_hydrate_retries_after_a_transient_store_failure() -> None:
+    shared_cards = InMemoryCardStore()
+    shared_vectors = InMemoryVectorStore()
+    seed = _service(
+        FakeParser({"s.pdf": _doc("LSTM seed", "LSTM", ["10.1/s"])}),
+        ScriptedLLM([_content(["LSTM"])]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+    seeded_job = await seed.ingest_pdf("s.pdf", _pdf("S"))
+    assert seeded_job.paper_id is not None
+
+    original_load = shared_cards.load_features
+    calls = 0
+
+    async def flaky_load():  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("temporary database outage")
+        return await original_load()
+
+    shared_cards.load_features = flaky_load  # type: ignore[method-assign]
+    restarted = _service(
+        FakeParser({}),
+        ScriptedLLM([]),
+        FakeGraphStore(),
+        vectors=shared_vectors,
+        cards=shared_cards,
+    )
+
+    with pytest.raises(ConnectionError, match="temporary database outage"):
+        await restarted.hydrate()
+    assert restarted._hydrated is False
+    assert restarted._features == {}
+
+    await restarted.hydrate()
+
+    assert calls == 2
+    assert restarted._hydrated is True
+    assert seeded_job.paper_id in restarted._features
+
+
 async def test_hydrate_is_idempotent_and_keeps_richer_in_memory_features() -> None:
     shared_cards = InMemoryCardStore()
     shared_vectors = InMemoryVectorStore()
