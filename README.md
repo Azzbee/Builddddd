@@ -51,8 +51,8 @@ is silently overwritten. The full math, calibration, and tuning story is in
 ## Architecture
 
 ```
-Next.js Web App  ──REST+SSE──>  FastAPI Backend
-                                   │
+Browser  ──same-origin /api──>  Next.js Server  ──REST+SSE──>  FastAPI Backend
+                                                               │
         ┌──────────────┬──────────┴───────────┐
    Ingestion        Graph Core            Agentic RAG
    Workers (arq)     (Neo4j)               Service
@@ -103,6 +103,10 @@ make seed                   # pull 20 arXiv commodity-forecasting papers
 make ingest FILE=paper.pdf  # ingest a local PDF
 ```
 
+The persistent API stages each PDF and returns a queued job before arq starts
+work. The Next.js server adds the production bearer token to browser requests;
+the token never enters client-side code.
+
 There is also a CLI (installed as `lattice`):
 
 ```bash
@@ -118,6 +122,7 @@ Develop and test the backend without any services:
 cd backend
 uv sync --extra dev
 uv run pytest               # offline test suite
+uv run ruff format --check .
 uv run ruff check . && uv run mypy lattice
 ```
 
@@ -171,7 +176,8 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 381 tests run fully offline; `mypy --strict` and `ruff` clean; ~93% coverage.
+- Backend: 412 tests pass offline; four live integration modules skip without
+  service DSNs; `mypy --strict`, Ruff lint, and Ruff format checks are clean.
 - Preprint -> published **supersession** is wired end-to-end (SUPERSEDED_BY edge,
   bi-temporal edge invalidation, out of analytics and the candidate pool), and
   extraction has a **cross-provider fallback** for provider outages.
@@ -182,7 +188,9 @@ eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,
   bi-temporal edges, claim relations, and the Neo4j read paths) on every push.
-- Web app builds clean (16 routes). Static SQL is parsed/validated with sqlglot.
+- Web app has 17 application routes and passes Prettier, ESLint, Vitest,
+  TypeScript, the production build, and `npm audit` with zero reported
+  vulnerabilities. Static SQL is parsed and validated with sqlglot.
 - Offline demo mode (`make demo`) loads a populated graph with zero external
   services.
 

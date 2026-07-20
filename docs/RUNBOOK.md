@@ -9,6 +9,7 @@ cp .env.example .env            # fill in ANTHROPIC_API_KEY etc.
 cd backend
 uv sync --extra dev             # core + dev deps
 uv run pytest                   # offline test suite (no services needed)
+uv run ruff format --check .
 uv run ruff check . && uv run mypy lattice
 ```
 
@@ -81,6 +82,19 @@ make down
 
 Endpoints: API `:8000`, Web `:3000`, Neo4j browser `:7474`, GROBID `:8070`.
 
+Persistent ingestion is asynchronous. The API stores the job and PDF before it
+returns 202, then an arq worker resumes the staged job. The web app polls the job
+endpoint. Direct clients can do the same:
+
+```bash
+curl -H "Authorization: Bearer $LATTICE_AUTH_TOKEN" \
+  -F "file=@paper.pdf" http://localhost:8000/ingest/file
+curl -H "Authorization: Bearer $LATTICE_AUTH_TOKEN" \
+  http://localhost:8000/ingest/jobs/JOB_ID
+curl -X POST -H "Authorization: Bearer $LATTICE_AUTH_TOKEN" \
+  http://localhost:8000/ingest/jobs/JOB_ID/retry
+```
+
 ## Configuration
 
 All knobs are in `backend/lattice/config.py`, overridable via `LATTICE_*` env
@@ -94,12 +108,23 @@ Key knobs:
   primary provider fails at the transport level (outage/timeout).
 - `LATTICE_INCREMENTAL_CONTRADICTIONS` - judge new papers' claims against the
   corpus at ingest (default true; offline heuristic judge).
-- `LATTICE_AUTH_TOKEN` - single-user bearer token (auth is off if unset).
+- `LATTICE_AUTH_TOKEN` - single-user bearer token. Production startup fails if
+  this is missing. The Next.js server proxy injects it for browser requests.
+- `LATTICE_CORS_ORIGINS` - JSON list of allowed browser origins. Wildcard CORS
+  is rejected in production.
+- `LATTICE_MAX_WORKSPACES` - maximum workspace containers cached by one process.
+- `LATTICE_INGEST_MAX_ATTEMPTS` - maximum dispatch attempts for one job.
+- `LATTICE_DOCLING__VISION_ENABLED` and `LATTICE_DOCLING__VISION_MODEL` - control
+  image arbitration for disputed GROBID and Docling sections.
+- `LATTICE_API_BASE` - FastAPI origin used by the Next.js server proxy. Keep it
+  server-side; do not put the bearer token in a public browser variable.
 
 ## Operations
 
 ### Health
-- `GET /health`, `GET /readyz` - liveness/readiness.
+- `GET /health` is process liveness and does not touch dependencies.
+- `GET /readyz` probes PostgreSQL, Neo4j, and Redis when persistence is enabled.
+  It returns 503 if any probe fails or exceeds `LATTICE_READINESS_TIMEOUT_S`.
 - Worker logs `worker.started`; ingestion logs `ingest.stage_complete` per stage.
 
 ### Reprocessing / backfill
@@ -132,14 +157,23 @@ cap is raised. Per-query cost is logged and returned in the agent result.
 | `cost_cap_exceeded` | spend cap hit | job PAUSED; resume after reset |
 | `rate_limited` | S2/OpenAlex throttling | cached + backoff; degrades to text-only similarity |
 
+Failed and paused jobs retain their source PDF and completed stage context in
+PostgreSQL. When the job response has `retryable: true`, call
+`POST /ingest/jobs/{id}/retry`; the worker resumes after the last completed
+stage. Terminal input errors and jobs at the configured attempt cap return 409
+and are not requeued. Retryable worker failures are also retried automatically
+with exponential delay until the same cap.
+
 ## Deployment (Hetzner VPS + Cloudflare Tunnel)
 
 1. Provision a VPS, install Docker + Compose.
-2. Clone the repo, set `.env` (real API keys, strong `LATTICE_AUTH_TOKEN`,
-   strong `LATTICE_NEO4J__PASSWORD`).
+2. Clone the repo, set `LATTICE_ENVIRONMENT=prod`, a strong
+   `LATTICE_AUTH_TOKEN`, explicit `LATTICE_CORS_ORIGINS`, real API keys, and a
+   strong `LATTICE_NEO4J__PASSWORD` in `.env`.
 3. `make up`.
-4. Expose `:8000` (API) and `:3000` (web) via a Cloudflare Tunnel; do not open
-   Neo4j/Postgres/Redis to the internet.
+4. Expose `:3000` via a Cloudflare Tunnel. Expose `:8000` only if non-browser
+   clients need direct API access, and keep it behind TLS and bearer auth. Never
+   expose Neo4j, PostgreSQL, or Redis to the internet.
 
 ### Backups (nightly)
 ```bash

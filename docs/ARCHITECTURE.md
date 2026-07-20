@@ -23,14 +23,27 @@ Next.js Web App  ──REST + SSE──>  FastAPI Backend
 A PDF (or arXiv id / DOI) moves through a resumable state machine
 (`ingestion/pipeline.py`, wired by `ingestion/service.py`). `job.stage` is always
 the last *completed* stage, so a crash resumes exactly where it stopped. Linking
-is the final, transactional stage, so a crash never leaves a partial paper in the
-graph.
+is the final stage. Its cross-store writes are idempotent rather than one database
+transaction, so rerunning a partially completed link converges without duplicate
+graph records.
+
+In persistent mode, the API first writes the job, source PDF, and serialized
+stage context to `ingest_jobs` and `ingest_artifacts`. Only the workspace and job
+IDs enter Redis. An arq worker rebuilds the workspace container, hydrates linking
+state from PostgreSQL, loads the artifact, and resumes after the last completed
+stage. A retry uses the same artifact and never uploads a large payload to Redis.
+The persisted `retryable` flag comes from the typed pipeline error, so malformed
+or scanned PDFs cannot consume worker attempts while timeouts and paused jobs can
+resume. Retryable worker failures use arq's deferred retry with exponential delay
+until `LATTICE_INGEST_MAX_ATTEMPTS` is reached.
 
 1. **PARSING** - `classify_pdf` rejects corrupted/scanned/paywalled inputs into
    typed, actionable error states. GROBID extracts structure, metadata, and
-   references (`grobid_client.parse_tei`, a pure function). Docling handles
-   tables/figures and reconciles regions by token overlap, attaching a
-   `parse_confidence`; low-confidence pages escalate to a vision LLM. Dedup
+   references (`grobid_client.parse_tei`, a pure function). Docling processes
+   the PDF once, contributes Markdown sections and tables, and reconciles each
+   matching section by token overlap. The selected text receives a
+   `parse_confidence`; disputed sections can escalate to a vision LLM using a
+   rendered image of the source page. Dedup
    (content hash / DOI / arXiv / fuzzy title+author) makes re-ingestion a no-op.
 2. **EXTRACTING** - the LLM fills a `PaperCard` via structured output with a
    validate-and-repair loop. Confidence blends the model's self-report,
@@ -38,7 +51,7 @@ graph.
    stronger model once, then flags `needs_review`. Results lacking an
    `evidence_location` are dropped (anti-hallucination).
 
-   The extraction boundary is deliberately robust to weak/cheap models (small
+   The extraction boundary is designed for weak or cheap models (small
    local models via `ollama/...`, budget hosted tiers), each measure driven by a
    failure observed live from a local 7B model:
    - The prompt embeds a JSON skeleton *generated from the pydantic model*
@@ -150,8 +163,9 @@ Three living-graph behaviors happen inside linking:
 
 - **Neo4j 5 + GDS**: the typed graph; PageRank/Louvain/betweenness write back onto
   nodes for the explorer.
-- **Postgres 16 + pgvector**: papers, chunks + embeddings, ingest job state, edge
-  audit, watch subscriptions/queue, digests. Supabase-compatible (`db/schema.sql`).
+- **Postgres 16 + pgvector**: papers, chunks and embeddings, ingest job state,
+  staged ingest artifacts, source PDFs, edge audit, watch queues, and digests.
+  Supabase-compatible (`db/schema.sql`).
 - **Redis**: arq task queue and enrichment cache.
 
 ### In-memory vs persistent backends
@@ -160,12 +174,22 @@ Every store sits behind a protocol with two implementations: an in-memory one
 (default; powers demo mode, dev, and the offline test suite) and a
 Postgres/Neo4j-backed one. Set `LATTICE_PERSISTENT=true` (docker-compose does this
 for the `api` and `worker`) to wire `PgVectorStore`, `PgCardStore`, `PgJobStore`,
-the `Neo4jGraphStore`, and a `Neo4jGraphReader`. Because the API and worker are
-separate processes, the persistent read paths query the live graph via the reader
-(`graph/reader.py`) rather than any in-process mirror, so reads are cross-process
-correct. The shared pool and driver are created once at startup
-(`deps.init_persistence`). All persistent code is verified live in CI against real
-service containers.
+`PgIngestArtifactStore`, `Neo4jGraphStore`, and `Neo4jGraphReader`. The API uses
+`ArqIngestionDispatcher` only when persistent Redis is available; development and
+demo containers use the inline dispatcher. Because the API and worker are
+separate processes, persistent reads query the live graph via `graph/reader.py`
+instead of an in-process mirror. The shared pool, graph driver, and Redis client
+are created once at startup in `deps.init_persistence`. Live integration tests
+exercise the datastore implementations against PostgreSQL and Neo4j in CI.
+
+## Web authentication boundary
+
+Browser code calls the same-origin Next.js `/api/[...path]` route. That route
+forwards method, query, body, content type, and workspace headers to FastAPI. It
+removes any browser-supplied authorization header and injects
+`LATTICE_AUTH_TOKEN` from the Next.js server environment. Direct FastAPI clients
+still send the bearer token themselves. This keeps the production secret out of
+JavaScript bundles, browser storage, URLs, and public environment variables.
 
 ## Agentic RAG
 
@@ -235,7 +259,8 @@ giving the reader and chat a precise deep-link target.
 ## Non-functional guarantees
 
 - **Idempotency**: content-hash + DOI dedup; every graph write is a MERGE.
-- **Resumability**: persisted job stage; linking is the final transaction.
+- **Resumability**: persisted stage context and source PDF; queue messages contain
+  identifiers only; linking is final and idempotent across stores.
 - **Type safety**: mypy strict (backend), Pydantic at every boundary.
 - **Prompt versioning**: prompts are hashed files; cards record their version.
 - **Cost ceilings**: per-job and daily caps; jobs pause (not fail) at the cap.

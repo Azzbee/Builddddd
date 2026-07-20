@@ -1,24 +1,37 @@
 # API reference
 
-FastAPI app (`lattice.api.app:app`). Interactive docs at `/docs`. All routes are
-single-user bearer-auth when `LATTICE_AUTH_TOKEN` is set, and workspace-scoped via
-an optional `X-Workspace-Id` header (defaults to the configured workspace).
+FastAPI app (`lattice.api.app:app`). Interactive docs are at `/docs`. Production
+startup requires `LATTICE_AUTH_TOKEN`; send it as `Authorization: Bearer <token>`.
+The Next.js app sends browser requests through its same-origin `/api` route and
+adds the token on the server, so the secret is never exposed to browser code.
+
+Application data is scoped by the optional `X-Workspace-Id` header. IDs must be
+1 to 64 characters using letters, numbers, dot, `_`, or hyphen. The API
+caps the number of cached workspace containers with `LATTICE_MAX_WORKSPACES`.
 
 ## Health & ops
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health`, `/healthz` | Liveness + version |
-| GET | `/readyz` | Readiness |
+| GET | `/readyz` | Readiness; probes PostgreSQL, Neo4j, and Redis in persistent mode, returns 503 on failure |
 | GET | `/metrics` | Prometheus exposition (requests, latency histogram) |
-| GET | `/workspaces` | Corpora touched this process |
+| GET | `/workspaces` | Authenticated list of corpora touched by this process |
 
 ## Ingestion
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/ingest/file` | Upload a PDF (multipart `file`); returns the job |
-| POST | `/ingest/arxiv` | `{ "arxiv_id": "..." }`; fetches + ingests |
+| POST | `/ingest/file` | Upload a PDF (multipart `file`); returns 202 with a queued job in persistent mode |
+| POST | `/ingest/arxiv` | `{ "arxiv_id": "..." }`; fetches and queues ingestion |
 | GET | `/ingest/jobs` | All jobs (newest first) |
 | GET | `/ingest/jobs/{id}` | One job (stage, status, error) |
+| POST | `/ingest/jobs/{id}/retry` | Requeue a retryable failed or paused job from its last completed stage |
+
+Demo and in-memory development run ingestion inline and return 200 with the
+completed job. Persistent mode stores the PDF and stage context in PostgreSQL
+before returning 202, then sends only workspace and job IDs through Redis. Poll
+`GET /ingest/jobs/{id}` until the status is terminal. Retry is capped by
+`LATTICE_INGEST_MAX_ATTEMPTS`. Job responses include `retryable`; retry returns
+409 for terminal failures, active or completed jobs, and jobs at the attempt cap.
 
 ## Papers & graph
 | Method | Path | Purpose |

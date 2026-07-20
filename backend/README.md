@@ -10,6 +10,7 @@ and [`docs/SIMILARITY.md`](../docs/SIMILARITY.md) for the full picture.
 ```bash
 uv sync --extra dev          # install core + dev dependencies
 uv run pytest                # run the offline test suite
+uv run ruff format --check . # check formatting
 uv run ruff check .          # lint
 uv run mypy lattice          # type-check
 ```
