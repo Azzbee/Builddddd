@@ -148,9 +148,7 @@ def parse_tei(xml: str | bytes) -> ParsedDocument:
         ryear = None
         if rdate is not None:
             ryear = _first_year(rdate.get("when", "")) or _first_year(_text(rdate))
-        rauthors = [
-            _persname(a) for a in bibl.findall(".//t:author", _NS) if _persname(a)
-        ]
+        rauthors = [_persname(a) for a in bibl.findall(".//t:author", _NS) if _persname(a)]
         if rtitle or rdoi or rarxiv:
             references.append(
                 ParsedReference(
@@ -183,7 +181,9 @@ class GrobidClient:
         self._settings = settings
         self._client = client
 
-    async def process_fulltext(self, pdf_bytes: bytes, filename: str = "paper.pdf") -> ParsedDocument:
+    async def process_fulltext(
+        self, pdf_bytes: bytes, filename: str = "paper.pdf"
+    ) -> ParsedDocument:
         client = self._client or httpx.AsyncClient(timeout=self._settings.timeout_s)
         owns = self._client is None
         url = f"{self._settings.url.rstrip('/')}/api/processFulltextDocument"

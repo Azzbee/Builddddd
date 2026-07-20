@@ -34,7 +34,5 @@ def test_lineage_timeline_grouping() -> None:
 
 
 def test_lineage_extends_edges() -> None:
-    lin = build_lineage(
-        _nodes(), cite_edges=[], method="lstm", extends_edges=[("p1", "p2")]
-    )
+    lin = build_lineage(_nodes(), cite_edges=[], method="lstm", extends_edges=[("p1", "p2")])
     assert any(e.kind == "extends" and e.source == "p1" and e.target == "p2" for e in lin.edges)

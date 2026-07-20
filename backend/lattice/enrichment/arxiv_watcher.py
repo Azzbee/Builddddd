@@ -39,14 +39,8 @@ def parse_arxiv_feed(xml: str | bytes) -> list[ArxivResult]:
         title = _clean(entry.findtext("a:title", default="", namespaces=_NS))
         summary = _clean(entry.findtext("a:summary", default="", namespaces=_NS))
         published = _clean(entry.findtext("a:published", default="", namespaces=_NS)) or None
-        authors = [
-            _clean(name.text)
-            for name in entry.findall("a:author/a:name", _NS)
-            if name.text
-        ]
-        categories = [
-            c.get("term", "") for c in entry.findall("a:category", _NS) if c.get("term")
-        ]
+        authors = [_clean(name.text) for name in entry.findall("a:author/a:name", _NS) if name.text]
+        categories = [c.get("term", "") for c in entry.findall("a:category", _NS) if c.get("term")]
         pdf_url = None
         for link in entry.findall("a:link", _NS):
             if link.get("title") == "pdf" or link.get("type") == "application/pdf":
@@ -86,5 +80,7 @@ class ArxivWatcher:
         }
         # arXiv returns Atom XML, not JSON; fetch raw text via the cached client.
         url = self._settings.arxiv_base_url
-        text = await self._http.get_text(url, params=params, cache_key=f"arxiv:{query}:{max_results}")
+        text = await self._http.get_text(
+            url, params=params, cache_key=f"arxiv:{query}:{max_results}"
+        )
         return parse_arxiv_feed(text)

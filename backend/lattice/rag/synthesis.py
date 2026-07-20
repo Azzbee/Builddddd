@@ -23,7 +23,13 @@ class Provenance:
     def add_chunk(self, hit: ChunkHit) -> None:
         entry = self.papers.setdefault(
             hit.paper_id,
-            {"title": hit.title, "sections": set(), "snippet": None, "evidence": None, "page": None},
+            {
+                "title": hit.title,
+                "sections": set(),
+                "snippet": None,
+                "evidence": None,
+                "page": None,
+            },
         )
         entry["sections"].add(hit.section_title)
         if entry["snippet"] is None:
@@ -34,7 +40,13 @@ class Provenance:
     def add_paper(self, paper_id: str, title: str, evidence: str | None = None) -> None:
         entry = self.papers.setdefault(
             paper_id,
-            {"title": title, "sections": set(), "snippet": None, "evidence": evidence, "page": None},
+            {
+                "title": title,
+                "sections": set(),
+                "snippet": None,
+                "evidence": evidence,
+                "page": None,
+            },
         )
         entry["title"] = entry.get("title") or title
 

@@ -16,7 +16,9 @@ from lattice.core.errors import CypherValidationError
 
 
 class GraphStore(Protocol):
-    async def execute(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]: ...
+    async def execute(
+        self, query: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]: ...
 
 
 class FakeGraphStore:

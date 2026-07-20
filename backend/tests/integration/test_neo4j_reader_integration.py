@@ -33,9 +33,13 @@ def _settings() -> Neo4jSettings:
 
 def _card(pid: str, title: str, method: str) -> PaperCard:
     return PaperCard(
-        paper_id=pid, title=title, year=2020 if pid == "p1" else 2023,
-        methodology=Methodology(approach_summary=method), paper_type=PaperType.EMPIRICAL,
-        domains=["commodity markets"], methods_taxonomy=[method],
+        paper_id=pid,
+        title=title,
+        year=2020 if pid == "p1" else 2023,
+        methodology=Methodology(approach_summary=method),
+        paper_type=PaperType.EMPIRICAL,
+        domains=["commodity markets"],
+        methods_taxonomy=[method],
     )
 
 
@@ -59,8 +63,10 @@ async def test_reader_snapshot_and_lineage_and_relations(store) -> None:  # type
 
     feats = PaperFeatures("p1", specter=np.array([1.0, 0.0]), methods={"lstm"})
     edges = compute_related_edges(
-        feats, [PaperFeatures("p2", specter=np.array([1.0, 0.0]), methods={"lstm"})],
-        SimilarityWeights(), CosineCalibrator(),
+        feats,
+        [PaperFeatures("p2", specter=np.array([1.0, 0.0]), methods={"lstm"})],
+        SimilarityWeights(),
+        CosineCalibrator(),
     )
     await writer.upsert_related_edge(edges[0])
 

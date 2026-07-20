@@ -8,9 +8,7 @@ from lattice.extraction.schemas import Methodology, PaperCard
 
 
 def _card(**kw) -> PaperCard:
-    return PaperCard(
-        paper_id="p1", title="t", methodology=Methodology(approach_summary="x"), **kw
-    )
+    return PaperCard(paper_id="p1", title="t", methodology=Methodology(approach_summary="x"), **kw)
 
 
 class FakeS2:
@@ -51,8 +49,11 @@ def _enricher(s2, oa) -> CompositeEnricher:
 async def test_enrich_uses_s2_specter_and_refs() -> None:
     s2 = FakeS2(
         EnrichedPaper(
-            source="semantic_scholar", s2_paper_id="S1", reference_ids=["r1", "r2"],
-            citation_count=12, specter_embedding=[0.1, 0.2],
+            source="semantic_scholar",
+            s2_paper_id="S1",
+            reference_ids=["r1", "r2"],
+            citation_count=12,
+            specter_embedding=[0.1, 0.2],
         )
     )
     oa = FakeOpenAlex()

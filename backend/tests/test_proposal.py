@@ -12,20 +12,41 @@ from lattice.landscape.proposal import (
 
 def _papers() -> list[FacetPaper]:
     return [
-        FacetPaper("p1", "LSTM on copper", 2019, {"lstm"}, {"lme copper"},
-                   "LSTM beats ARIMA", ["single commodity"]),
-        FacetPaper("p2", "LSTM on aluminium", 2020, {"lstm"}, {"lme aluminium"},
-                   "LSTM generalizes", ["no transaction costs"]),
-        FacetPaper("p3", "VAR on gold", 2018, {"var"}, {"comex gold"},
-                   "VAR underperforms", ["linear only"]),
+        FacetPaper(
+            "p1",
+            "LSTM on copper",
+            2019,
+            {"lstm"},
+            {"lme copper"},
+            "LSTM beats ARIMA",
+            ["single commodity"],
+        ),
+        FacetPaper(
+            "p2",
+            "LSTM on aluminium",
+            2020,
+            {"lstm"},
+            {"lme aluminium"},
+            "LSTM generalizes",
+            ["no transaction costs"],
+        ),
+        FacetPaper(
+            "p3", "VAR on gold", 2018, {"var"}, {"comex gold"}, "VAR underperforms", ["linear only"]
+        ),
     ]
 
 
 def test_proposal_for_true_gap_composes_building_blocks() -> None:
     # Gap: lstm x comex gold. lstm has a track record; comex gold studied with var.
     p = build_proposal(
-        "method", "dataset", "lstm", "comex gold", _papers(),
-        now_year=2024, global_count=3, demand=0.6,
+        "method",
+        "dataset",
+        "lstm",
+        "comex gold",
+        _papers(),
+        now_year=2024,
+        global_count=3,
+        demand=0.6,
     )
     assert p.state == "gap"
     assert "lightly explored" in p.novelty.lower()
@@ -44,8 +65,14 @@ def test_proposal_for_true_gap_composes_building_blocks() -> None:
 
 def test_blind_spot_framing_when_world_has_many() -> None:
     p = build_proposal(
-        "method", "dataset", "lstm", "comex gold", _papers(),
-        now_year=2024, global_count=BLIND_SPOT_MIN_GLOBAL + 10, demand=0.3,
+        "method",
+        "dataset",
+        "lstm",
+        "comex gold",
+        _papers(),
+        now_year=2024,
+        global_count=BLIND_SPOT_MIN_GLOBAL + 10,
+        demand=0.3,
     )
     assert p.state == "blind_spot"
     assert "blind spot" in p.novelty.lower()
@@ -54,8 +81,14 @@ def test_blind_spot_framing_when_world_has_many() -> None:
 
 def test_greenfield_when_no_external_signal() -> None:
     p = build_proposal(
-        "method", "dataset", "lstm", "comex gold", _papers(),
-        now_year=2024, global_count=0, demand=0.1,
+        "method",
+        "dataset",
+        "lstm",
+        "comex gold",
+        _papers(),
+        now_year=2024,
+        global_count=0,
+        demand=0.1,
     )
     assert p.state == "gap"
     assert "greenfield" in p.novelty.lower()
@@ -75,8 +108,14 @@ def test_occupied_cell_reports_prior_art_not_a_gap() -> None:
 
 def test_missing_track_record_lowers_confidence_and_flags_risk() -> None:
     p = build_proposal(
-        "method", "dataset", "transformer", "eia energy", _papers(),
-        now_year=2024, global_count=0, demand=0.0,
+        "method",
+        "dataset",
+        "transformer",
+        "eia energy",
+        _papers(),
+        now_year=2024,
+        global_count=0,
+        demand=0.0,
     )
     # Neither side has corpus precedent.
     assert not p.row_track_record and not p.col_track_record
@@ -87,8 +126,14 @@ def test_missing_track_record_lowers_confidence_and_flags_risk() -> None:
 def test_why_now_uses_momentum() -> None:
     hot = MomentumLite(maturity="accelerating", composite=0.8, burst=2.0)
     p = build_proposal(
-        "method", "dataset", "lstm", "comex gold", _papers(),
-        now_year=2024, demand=0.5, row_momentum=hot,
+        "method",
+        "dataset",
+        "lstm",
+        "comex gold",
+        _papers(),
+        now_year=2024,
+        demand=0.5,
+        row_momentum=hot,
     )
     assert "accelerating" in p.why_now.lower()
     assert "demand" in p.why_now.lower()
@@ -96,8 +141,13 @@ def test_why_now_uses_momentum() -> None:
 
 def test_open_problems_included() -> None:
     p = build_proposal(
-        "method", "dataset", "lstm", "comex gold", _papers(),
-        now_year=2024, open_problems=["extend LSTM to gold markets"],
+        "method",
+        "dataset",
+        "lstm",
+        "comex gold",
+        _papers(),
+        now_year=2024,
+        open_problems=["extend LSTM to gold markets"],
     )
     assert p.open_problems == ["extend LSTM to gold markets"]
     assert "Open problems" in p.markdown()

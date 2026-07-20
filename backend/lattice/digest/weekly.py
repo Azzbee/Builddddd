@@ -59,7 +59,9 @@ class DigestReport:
         return {
             "period_label": self.period_label,
             "summary": self.summary,
-            "new_papers": [{"id": p.paper_id, "title": p.title, "year": p.year} for p in self.new_papers],
+            "new_papers": [
+                {"id": p.paper_id, "title": p.title, "year": p.year} for p in self.new_papers
+            ],
             "notable_weight_changes": [
                 {
                     "source": c.source_id,
@@ -70,7 +72,12 @@ class DigestReport:
                 for c in self.notable_weight_changes
             ],
             "contradictions": [
-                {"claim_a": c.claim_a, "paper_a": c.paper_a, "claim_b": c.claim_b, "paper_b": c.paper_b}
+                {
+                    "claim_a": c.claim_a,
+                    "paper_a": c.paper_a,
+                    "claim_b": c.claim_b,
+                    "paper_b": c.paper_b,
+                }
                 for c in self.contradictions
             ],
             "movers": [m.to_json() for m in self.movers],
@@ -86,9 +93,7 @@ def build_digest(
         for c in data.weight_changes
         if c.old_weight is None or abs(c.new_weight - c.old_weight) >= weight_change_min
     ]
-    notable.sort(
-        key=lambda c: abs(c.new_weight - (c.old_weight or 0.0)), reverse=True
-    )
+    notable.sort(key=lambda c: abs(c.new_weight - (c.old_weight or 0.0)), reverse=True)
     movers = sorted(data.movers, key=lambda m: m.composite, reverse=True)[:max_movers]
     summary = {
         "new_papers": len(data.new_papers),
@@ -137,7 +142,7 @@ def render_markdown(report: DigestReport) -> str:
     if report.contradictions:
         lines.append("## Contradictions")
         for cont in report.contradictions:
-            lines.append(f"- {cont.paper_a}: \"{cont.claim_a}\" vs {cont.paper_b}: \"{cont.claim_b}\"")
+            lines.append(f'- {cont.paper_a}: "{cont.claim_a}" vs {cont.paper_b}: "{cont.claim_b}"')
         lines.append("")
 
     if report.notable_weight_changes:

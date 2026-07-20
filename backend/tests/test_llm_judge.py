@@ -29,12 +29,18 @@ class FakeJudgeLLM:
         self.precision = precision
         self.calls = 0
 
-    async def complete(self, model: str, messages: list[LLMMessage], **kwargs: object) -> LLMResponse:
+    async def complete(
+        self, model: str, messages: list[LLMMessage], **kwargs: object
+    ) -> LLMResponse:
         self.calls += 1
         prompt = messages[-1].content
         if "atomic factual claims" in prompt:
-            payload = {"claims": [{"claim": "c1", "supported": self.supported},
-                                  {"claim": "c2", "supported": True}]}
+            payload = {
+                "claims": [
+                    {"claim": "c1", "supported": self.supported},
+                    {"claim": "c2", "supported": True},
+                ]
+            }
         elif "directly the ANSWER addresses" in prompt:
             payload = {"score": self.score, "reasoning": "ok"}
         elif "numbered CONTEXT" in prompt:
@@ -46,12 +52,17 @@ class FakeJudgeLLM:
         return LLMResponse(text=json.dumps(payload), model=model)
 
 
-def _result(answer: str = "LSTM beat ARIMA on RMSE.", cites: list[str] | None = None,
-            abstained: bool = False) -> AgentResult:
+def _result(
+    answer: str = "LSTM beat ARIMA on RMSE.",
+    cites: list[str] | None = None,
+    abstained: bool = False,
+) -> AgentResult:
     cites = cites or ["golden-001"]
     return AgentResult(
         answer=answer,
-        citations=[Citation(i + 1, pid, "T", snippet="evidence snippet") for i, pid in enumerate(cites)],
+        citations=[
+            Citation(i + 1, pid, "T", snippet="evidence snippet") for i, pid in enumerate(cites)
+        ],
         abstained=abstained,
     )
 
@@ -74,7 +85,9 @@ async def test_faithfulness_empty_answer_is_zero() -> None:
 @pytest.mark.asyncio
 async def test_faithfulness_no_claims_is_one() -> None:
     class NoClaims(FakeJudgeLLM):
-        async def complete(self, model: str, messages: list[LLMMessage], **kw: object) -> LLMResponse:
+        async def complete(
+            self, model: str, messages: list[LLMMessage], **kw: object
+        ) -> LLMResponse:
             return LLMResponse(text='{"claims": []}', model=model)
 
     judge = LLMJudge(NoClaims())
@@ -100,7 +113,9 @@ async def test_context_precision_fraction_and_empty() -> None:
 @pytest.mark.asyncio
 async def test_malformed_json_degrades_gracefully() -> None:
     class Garbage(FakeJudgeLLM):
-        async def complete(self, model: str, messages: list[LLMMessage], **kw: object) -> LLMResponse:
+        async def complete(
+            self, model: str, messages: list[LLMMessage], **kw: object
+        ) -> LLMResponse:
             return LLMResponse(text="not json at all", model=model)
 
     judge = LLMJudge(Garbage())

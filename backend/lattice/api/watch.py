@@ -20,7 +20,9 @@ async def queue(c: Container = Depends(get_container)) -> list[dict[str, object]
 
 
 @router.post("/approve")
-async def approve(action: ApprovalAction, c: Container = Depends(get_container)) -> dict[str, object]:
+async def approve(
+    action: ApprovalAction, c: Container = Depends(get_container)
+) -> dict[str, object]:
     status = "approved" if action.approve else "rejected"
     ok = await c.watch.set_status(action.arxiv_id, status)
     if not ok:

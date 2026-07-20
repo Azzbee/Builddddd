@@ -16,7 +16,9 @@ from lattice.enrichment.models import EnrichedPaper, ExternalAuthor
 def parse_openalex_work(data: dict[str, Any]) -> EnrichedPaper:
     """Map a raw OpenAlex work JSON object to an EnrichedPaper. Pure and tested."""
     ids = data.get("ids") or {}
-    concepts = [c.get("display_name", "") for c in data.get("concepts") or [] if c.get("display_name")]
+    concepts = [
+        c.get("display_name", "") for c in data.get("concepts") or [] if c.get("display_name")
+    ]
     authors = [
         ExternalAuthor(
             name=(a.get("author") or {}).get("display_name", ""),
@@ -58,7 +60,9 @@ class OpenAlexClient:
     def _mailto(self) -> dict[str, str]:
         return {"mailto": self._settings.openalex_mailto}
 
-    async def get_work(self, *, doi: str | None = None, openalex_id: str | None = None) -> EnrichedPaper:
+    async def get_work(
+        self, *, doi: str | None = None, openalex_id: str | None = None
+    ) -> EnrichedPaper:
         if openalex_id:
             ident = openalex_id.rsplit("/", 1)[-1]
         elif doi:
@@ -69,7 +73,9 @@ class OpenAlexClient:
         data = await self._http.get_json(url, params=self._mailto)
         return parse_openalex_work(data)
 
-    async def concept_year_counts(self, concept: str, from_year: int, to_year: int) -> dict[int, int]:
+    async def concept_year_counts(
+        self, concept: str, from_year: int, to_year: int
+    ) -> dict[int, int]:
         """Global publications per year matching a concept (for momentum/landscape).
 
         Returns ``{year: count}``. This is the "global signal" that distinguishes a

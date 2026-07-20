@@ -43,9 +43,7 @@ class Lineage:
             timeline.setdefault(n.year or 0, []).append(n.paper_id)
         return {
             "method": self.method,
-            "nodes": [
-                {"id": n.paper_id, "title": n.title, "year": n.year} for n in self.nodes
-            ],
+            "nodes": [{"id": n.paper_id, "title": n.title, "year": n.year} for n in self.nodes],
             "edges": [e.to_json() for e in self.edges],
             "timeline": {str(y): ids for y, ids in sorted(timeline.items())},
         }

@@ -145,9 +145,21 @@ def test_candidate_pairs_for_only_pairs_new_against_existing() -> None:
 async def test_detect_relations_for_flags_contradiction() -> None:
     from lattice.graph.contradictions import detect_relations_for
 
-    new = [_claim("n1", "pNew", "LSTM significantly improves forecasting accuracy over ARIMA", "forecasting")]
+    new = [
+        _claim(
+            "n1",
+            "pNew",
+            "LSTM significantly improves forecasting accuracy over ARIMA",
+            "forecasting",
+        )
+    ]
     existing = [
-        _claim("e1", "pOld", "LSTM shows no improvement in forecasting accuracy over ARIMA", "forecasting")
+        _claim(
+            "e1",
+            "pOld",
+            "LSTM shows no improvement in forecasting accuracy over ARIMA",
+            "forecasting",
+        )
     ]
     report = await detect_relations_for(new, existing, HeuristicNLIJudge())
     assert len(report.contradictions) == 1

@@ -66,9 +66,7 @@ class InMemoryBlobStore:
         self._data: dict[str, bytes] = {}
         self._meta: dict[str, BlobMeta] = {}
 
-    async def put(
-        self, paper_id: str, data: bytes, *, content_hash: str | None = None
-    ) -> BlobMeta:
+    async def put(self, paper_id: str, data: bytes, *, content_hash: str | None = None) -> BlobMeta:
         meta = BlobMeta(
             paper_id=paper_id,
             size=len(data),
@@ -116,9 +114,7 @@ class PgBlobStore:  # pragma: no cover - requires Postgres
     pool: Any
     workspace_id: str = "default"
 
-    async def put(
-        self, paper_id: str, data: bytes, *, content_hash: str | None = None
-    ) -> BlobMeta:
+    async def put(self, paper_id: str, data: bytes, *, content_hash: str | None = None) -> BlobMeta:
         meta = BlobMeta(
             paper_id=paper_id,
             size=len(data),
@@ -128,7 +124,12 @@ class PgBlobStore:  # pragma: no cover - requires Postgres
         async with self.pool.acquire() as conn:
             await conn.execute(
                 SQL_UPSERT_BLOB,
-                paper_id, self.workspace_id, data, meta.size, meta.pages, meta.content_hash,
+                paper_id,
+                self.workspace_id,
+                data,
+                meta.size,
+                meta.pages,
+                meta.content_hash,
             )
         return meta
 

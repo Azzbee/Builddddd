@@ -21,7 +21,9 @@ _FIELDS = (
 )
 
 
-def paper_id_param(*, doi: str | None = None, arxiv_id: str | None = None, s2_id: str | None = None) -> str:
+def paper_id_param(
+    *, doi: str | None = None, arxiv_id: str | None = None, s2_id: str | None = None
+) -> str:
     """Build the S2 paper identifier path segment from any available id."""
     if s2_id:
         return s2_id

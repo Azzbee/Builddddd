@@ -37,10 +37,7 @@ class DemandScorer:
 
     @classmethod
     def from_cards(cls, embedder: TextEmbedder, cards: list[PaperCard]) -> DemandScorer:
-        texts = [
-            " ".join([*card.future_work, *card.limitations]).strip()
-            for card in cards
-        ]
+        texts = [" ".join([*card.future_work, *card.limitations]).strip() for card in cards]
         nonempty = [t for t in texts if t]
         vectors = [np.asarray(v, dtype=float) for v in embedder.embed(nonempty)] if nonempty else []
         return cls(embedder=embedder, _paper_vectors=vectors)

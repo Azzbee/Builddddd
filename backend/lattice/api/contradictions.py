@@ -5,11 +5,15 @@ from fastapi import APIRouter, Depends
 from lattice.api.deps import Container, get_container, require_auth
 from lattice.graph.contradictions import HeuristicNLIJudge, LLMNLIJudge
 
-router = APIRouter(prefix="/contradictions", tags=["contradictions"], dependencies=[Depends(require_auth)])
+router = APIRouter(
+    prefix="/contradictions", tags=["contradictions"], dependencies=[Depends(require_auth)]
+)
 
 
 @router.post("/analyze")
-async def analyze(use_llm: bool = False, c: Container = Depends(get_container)) -> dict[str, object]:
+async def analyze(
+    use_llm: bool = False, c: Container = Depends(get_container)
+) -> dict[str, object]:
     """Run claim-level relation detection over the corpus and persist edges.
 
     Uses the deterministic heuristic judge by default; ``use_llm=true`` switches to

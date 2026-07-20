@@ -119,11 +119,7 @@ def build_gap_matrix(
     cells: list[MatrixCell] = []
     for r in rows:
         for c in cols:
-            in_cell = [
-                p
-                for p in papers
-                if r in p.facet(row_facet) and c in p.facet(col_facet)
-            ]
+            in_cell = [p for p in papers if r in p.facet(row_facet) and c in p.facet(col_facet)]
             sparkline: dict[int, int] = {}
             for p in in_cell:
                 if p.year is not None:
@@ -148,14 +144,18 @@ def build_gap_matrix(
             feasibility = feasibility_fn(r, c)
             if feasibility <= 0.05:
                 cells.append(
-                    MatrixCell(r, c, [], None, {}, CellState.STRUCTURALLY_EMPTY, feasibility=feasibility)
+                    MatrixCell(
+                        r, c, [], None, {}, CellState.STRUCTURALLY_EMPTY, feasibility=feasibility
+                    )
                 )
                 continue
             global_count = global_count_fn(r, c)
             adjacency = (row_activity[r] + col_activity[c]) / (2 * max_marginal)
             demand = demand_fn(r, c)
             gap_score = feasibility * adjacency * demand
-            state = CellState.BLIND_SPOT if global_count >= blind_spot_min_global else CellState.EMPTY
+            state = (
+                CellState.BLIND_SPOT if global_count >= blind_spot_min_global else CellState.EMPTY
+            )
             cells.append(
                 MatrixCell(
                     row=r,
@@ -197,8 +197,6 @@ def _classify_populated(
 
 def top_gaps(cells: list[MatrixCell], limit: int = 10) -> list[MatrixCell]:
     """Empty/blind-spot cells ranked by gap_score (excludes structurally empty)."""
-    candidates = [
-        c for c in cells if c.state in (CellState.EMPTY, CellState.BLIND_SPOT)
-    ]
+    candidates = [c for c in cells if c.state in (CellState.EMPTY, CellState.BLIND_SPOT)]
     candidates.sort(key=lambda c: c.gap_score, reverse=True)
     return candidates[:limit]

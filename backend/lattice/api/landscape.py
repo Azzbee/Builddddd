@@ -21,9 +21,7 @@ _FACETS = {"method", "dataset", "concept"}
 GLOBAL_SIGNAL_BUDGET_S = 6.0
 
 
-async def _global_counts(
-    c: Container, cells: list[tuple[str, str]]
-) -> dict[tuple[str, str], int]:
+async def _global_counts(c: Container, cells: list[tuple[str, str]]) -> dict[tuple[str, str], int]:
     """Fetch OpenAlex counts for ``cells`` under a strict time budget; {} on miss."""
     if not cells:
         return {}
@@ -70,12 +68,7 @@ async def matrix(
     # Find empty cells to query the global signal for (Empty vs Blind-spot).
     rows = sorted({v for f in facets for v in f.facet(row)})
     cols = sorted({v for f in facets for v in f.facet(col)})
-    populated = {
-        (r, col_v)
-        for f in facets
-        for r in f.facet(row)
-        for col_v in f.facet(col)
-    }
+    populated = {(r, col_v) for f in facets for r in f.facet(row) for col_v in f.facet(col)}
     empties = [(r, cv) for r in rows for cv in cols if (r, cv) not in populated]
 
     global_counts = await _global_counts(c, empties) if use_global else {}
@@ -113,7 +106,9 @@ async def proposal(
     col: str = Query(..., description="col facet value, e.g. a dataset"),
     row_facet: str = Query("method"),
     col_facet: str = Query("dataset"),
-    use_global: bool = Query(False, description="Query OpenAlex for the Empty vs Blind-spot signal"),
+    use_global: bool = Query(
+        False, description="Query OpenAlex for the Empty vs Blind-spot signal"
+    ),
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
     """Generate a grounded research proposal for one (row, col) gap cell."""
@@ -133,7 +128,9 @@ async def opportunities(
     row_facet: str = Query("method"),
     col_facet: str = Query("dataset"),
     limit: int = Query(5, ge=1, le=20),
-    use_global: bool = Query(False, description="Query OpenAlex for the Empty vs Blind-spot signal"),
+    use_global: bool = Query(
+        False, description="Query OpenAlex for the Empty vs Blind-spot signal"
+    ),
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
     """Rank the corpus's top gaps and draft a full proposal for each."""

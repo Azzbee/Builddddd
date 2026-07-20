@@ -61,9 +61,7 @@ class ExtractionReport:
         }
 
 
-def evaluate_corpus(
-    predictions: dict[str, PaperCard], golds: list[GoldCard]
-) -> ExtractionReport:
+def evaluate_corpus(predictions: dict[str, PaperCard], golds: list[GoldCard]) -> ExtractionReport:
     """Aggregate micro PRF per field across all papers (summing TP/FP/FN)."""
     fields = ["problem", "methods", "datasets", "results", "limitations"]
     tp = dict.fromkeys(fields, 0)

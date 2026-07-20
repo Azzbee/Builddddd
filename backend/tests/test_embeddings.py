@@ -80,8 +80,16 @@ def test_specter2_local_fallback() -> None:
 
 def test_chunk_embedder_returns_vector_per_chunk() -> None:
     chunks = [
-        Chunk(chunk_id=f"c{i}", paper_id="p", section_id="s", section_title="S", ordinal=i,
-              text=f"text {i}", char_start=0, char_end=6)
+        Chunk(
+            chunk_id=f"c{i}",
+            paper_id="p",
+            section_id="s",
+            section_title="S",
+            ordinal=i,
+            text=f"text {i}",
+            char_start=0,
+            char_end=6,
+        )
         for i in range(5)
     ]
     embedder = ChunkEmbedder(dim=32, batch_size=2)
@@ -106,7 +114,8 @@ def test_aspect_embedder() -> None:
 
 def test_aspect_empty_field_is_zero_vector() -> None:
     card = PaperCard(
-        paper_id="p", title="t",
+        paper_id="p",
+        title="t",
         problem_statement="Something",
         methodology=Methodology(approach_summary="approach"),
         key_results=[],  # empty results -> zero vector
