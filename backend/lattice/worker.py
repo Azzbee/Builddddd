@@ -17,6 +17,9 @@ from lattice.ingestion.models import JobStatus
 
 log = get_logger("worker")
 
+_RETRY_BACKOFF_BASE = 2
+_MAX_RETRY_DELAY_S = 60
+
 
 def _container(ctx: dict[str, Any], workspace_id: str) -> Container:
     containers: dict[str, Container] = ctx["containers"]
@@ -37,7 +40,10 @@ async def ingest_job_task(ctx: dict[str, Any], workspace_id: str, job_id: str) -
     ):
         from arq import Retry
 
-        delay = min(60, 2 ** max(0, job.attempts - 1))
+        delay = min(
+            _MAX_RETRY_DELAY_S,
+            _RETRY_BACKOFF_BASE ** max(0, job.attempts - 1),
+        )
         log.warning("ingest.retry_scheduled", job_id=job_id, delay_s=delay)
         raise Retry(defer=delay)
     result: dict[str, Any] = job.model_dump(mode="json")
