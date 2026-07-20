@@ -1,13 +1,7 @@
 from __future__ import annotations
 
-from lattice.config import DoclingSettings
-from lattice.ingestion.docling_client import (
-    apply_reconciliation,
-    reconcile,
-    token_overlap,
-)
-from lattice.ingestion.models import ParsedDocument, ParsedSection
-from lattice.ingestion.vision_fallback import arbitrate_region, caption_figure
+from lattice.ingestion.docling_client import reconcile, token_overlap
+from lattice.ingestion.vision_fallback import arbitrate_region
 
 
 def test_token_overlap() -> None:
@@ -29,20 +23,6 @@ def test_reconcile_escalates_on_disagreement() -> None:
     assert d.confidence < 0.9
 
 
-def test_apply_reconciliation_sets_confidence() -> None:
-    doc = ParsedDocument(
-        title="t",
-        sections=[
-            ParsedSection(section_id="s1", title="Results", text="RMSE 0.12 beats ARIMA"),
-            ParsedSection(section_id="s2", title="Intro", text="hello world"),
-        ],
-    )
-    docling = {"s1": "RMSE 0.12 beats ARIMA baseline", "s2": "totally unrelated content xyz"}
-    out = apply_reconciliation(doc, docling, DoclingSettings())
-    assert out.sections[0].parse_confidence > out.sections[1].parse_confidence
-    assert out.overall_confidence == out.sections[1].parse_confidence
-
-
 class _FakeVision:
     def __init__(self, reply: str) -> None:
         self.reply = reply
@@ -57,9 +37,3 @@ async def test_arbitrate_region_uses_model() -> None:
     model = _FakeVision("clean text")
     out = await arbitrate_region(model, b"png", "a", "b")
     assert out == "clean text" and model.calls == 1
-
-
-async def test_caption_figure() -> None:
-    model = _FakeVision("A line chart of copper prices over time.")
-    out = await caption_figure(model, b"png")
-    assert "copper" in out

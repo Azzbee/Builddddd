@@ -1,42 +1,11 @@
-"""Graph schema: node/edge type registry and Neo4j constraints.
+"""Neo4j constraints and indexes for the persisted graph schema.
 
 Owning the ontology is the product. Generic frameworks treat all entities the
 same; a literature graph has a known, rich ontology and a precise multi-component
 similarity function, so the schema is explicit and constrained.
 """
 
-from __future__ import annotations
-
-from enum import StrEnum
-
 from lattice.graph.store import GraphStore
-
-
-class NodeLabel(StrEnum):
-    PAPER = "Paper"
-    AUTHOR = "Author"
-    METHOD = "Method"
-    DATASET = "Dataset"
-    CONCEPT = "Concept"
-    CLAIM = "Claim"
-    OPEN_PROBLEM = "OpenProblem"
-    FORMULA = "Formula"
-
-
-class EdgeType(StrEnum):
-    RELATED_TO = "RELATED_TO"  # the signature weighted composite edge
-    CITES = "CITES"
-    USES_METHOD = "USES_METHOD"
-    USES_DATASET = "USES_DATASET"
-    ADDRESSES = "ADDRESSES"
-    WROTE = "WROTE"
-    SUPPORTS = "SUPPORTS"
-    CONTRADICTS = "CONTRADICTS"
-    EXTENDS = "EXTENDS"
-    SUPERSEDED_BY = "SUPERSEDED_BY"
-    RAISES = "RAISES"
-    ADDRESSES_PROBLEM = "ADDRESSES_PROBLEM"
-
 
 #: Uniqueness constraints (also create backing indexes). Scoped by workspace_id
 #: via composite keys so the graph is multi-tenant ready.

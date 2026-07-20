@@ -1,4 +1,4 @@
-"""Docling client: layout-aware tables, figures, and Markdown body text.
+"""Docling client: layout-aware tables and Markdown body text.
 
 Docling is the region specialist. GROBID stays the backbone for structure and
 references; Docling handles its known weaknesses (tables, complex layout). The
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from lattice.config import DoclingSettings
 from lattice.core.hashing import normalize_text
 from lattice.core.logging import get_logger
-from lattice.ingestion.models import ParsedDocument, TableArtifact
+from lattice.ingestion.models import TableArtifact
 
 log = get_logger("ingestion.docling")
 
@@ -79,34 +79,6 @@ class DoclingClient:
             return False
         return self._settings.enabled
 
-    def extract_tables(self, pdf_path: str) -> list[TableArtifact]:  # pragma: no cover
-        """Extract structured tables from a PDF via Docling TableFormer."""
-        if not self.available():
-            log.warning("docling.unavailable", path=pdf_path)
-            return []
-        from docling.document_converter import DocumentConverter
-
-        converter = DocumentConverter()
-        result = converter.convert(pdf_path)
-        tables: list[TableArtifact] = []
-        for i, table in enumerate(getattr(result.document, "tables", [])):
-            try:
-                df = table.export_to_dataframe()
-                headers = [str(c) for c in df.columns]
-                rows = [[str(v) for v in row] for row in df.to_numpy().tolist()]
-            except Exception:
-                headers, rows = [], []
-            tables.append(
-                TableArtifact(
-                    table_id=f"table-{i + 1}",
-                    caption=getattr(table, "caption", None),
-                    headers=headers,
-                    rows=rows,
-                    parse_confidence=0.9,
-                )
-            )
-        return tables
-
     def extract(self, pdf_path: str) -> DoclingOutput:  # pragma: no cover
         """Convert once and return both Markdown body text and structured tables."""
         if not self.available():
@@ -134,32 +106,3 @@ class DoclingClient:
                 )
             )
         return DoclingOutput(markdown=str(document.export_to_markdown()), tables=tables)
-
-    def to_markdown(self, pdf_path: str) -> str:  # pragma: no cover
-        if not self.available():
-            return ""
-        from docling.document_converter import DocumentConverter
-
-        return str(DocumentConverter().convert(pdf_path).document.export_to_markdown())
-
-
-def apply_reconciliation(
-    doc: ParsedDocument, docling_sections: dict[str, str], settings: DoclingSettings
-) -> ParsedDocument:
-    """Attach reconciled parse_confidence to each prose section in ``doc``.
-
-    ``docling_sections`` maps section_id -> Docling text for the same region. The
-    document's ``overall_confidence`` becomes the minimum across sections.
-    """
-    min_conf = 1.0
-    for section in doc.sections:
-        dtext = docling_sections.get(section.section_id)
-        if dtext is None:
-            continue
-        decision = reconcile(section.text, dtext, settings.reconcile_threshold)
-        section.parse_confidence = decision.confidence
-        if decision.accept and decision.text:
-            section.text = decision.text
-        min_conf = min(min_conf, decision.confidence)
-    doc.overall_confidence = min_conf
-    return doc

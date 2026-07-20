@@ -76,13 +76,3 @@ async def arbitrate_region(
     result = await model.describe_image(page_image_png, prompt)
     log.info("vision.arbitrated", in_len=len(grobid_text) + len(docling_text), out_len=len(result))
     return result.strip()
-
-
-CAPTION_PROMPT = """Describe this figure from a scientific paper in 1-3 sentences \
-suitable as searchable alt text. State what is plotted, the axes or variables, and \
-the main takeaway. Be concrete and concise."""
-
-
-async def caption_figure(model: VisionModel, figure_png: bytes) -> str:
-    """Generate grounded alt text for a figure (one cheap call, batched upstream)."""
-    return (await model.describe_image(figure_png, CAPTION_PROMPT)).strip()
