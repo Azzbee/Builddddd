@@ -28,9 +28,12 @@ export default function RelatedWorkPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {/* API responses are file downloads, not client-routed pages. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a className="btn" href="/api/export/bibtex">
             Download .bib
           </a>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a className="btn" href="/api/export/obsidian">
             Obsidian .zip
           </a>

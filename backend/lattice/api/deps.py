@@ -8,12 +8,13 @@ Tests override the container via :func:`set_container`.
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from fastapi import Header, HTTPException, status
 
-from lattice.config import Settings, get_settings
+from lattice.config import Settings, get_settings, validate_workspace_id
 from lattice.core.llm import LiteLLMClient, LLMClient
 from lattice.db.aux_stores import (
     DigestStore,
@@ -274,8 +275,17 @@ def get_container(x_workspace_id: str | None = Header(default=None)) -> Containe
         return _override
     # Guard against non-FastAPI callers receiving the Header() sentinel.
     header = x_workspace_id if isinstance(x_workspace_id, str) else None
-    ws = header or get_settings().workspace_id
+    settings = get_settings()
+    try:
+        ws = validate_workspace_id(header or settings.workspace_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if ws not in _registry:
+        if len(_registry) >= settings.max_workspaces:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                f"workspace limit reached ({settings.max_workspaces})",
+            )
         _registry[ws] = build_container(workspace_id=ws)
     return _registry[ws]
 
@@ -296,5 +306,5 @@ async def require_auth(authorization: str | None = Header(default=None)) -> None
     if not settings.auth_token:
         return
     expected = f"Bearer {settings.auth_token}"
-    if authorization != expected:
+    if authorization is None or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or missing bearer token")

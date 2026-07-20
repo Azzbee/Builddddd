@@ -136,3 +136,22 @@ def test_similarity_weight_negative_rejected(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("LATTICE_SIMILARITY__ALPHA", "-1")
     with pytest.raises(ValueError):
         Settings()
+
+
+def test_production_settings_require_auth_and_restrict_cors() -> None:
+    with pytest.raises(ValueError, match="AUTH_TOKEN"):
+        Settings(environment="prod", auth_token=None)
+    with pytest.raises(ValueError, match="wildcard CORS"):
+        Settings(environment="prod", auth_token="secret", cors_origins=["*"])
+    settings = Settings(
+        environment="prod",
+        auth_token="secret",
+        cors_origins=["https://lattice.example"],
+    )
+    assert settings.cors_origins == ["https://lattice.example"]
+
+
+@pytest.mark.parametrize("workspace", ["", "../escape", "white space", "x" * 65])
+def test_settings_reject_invalid_workspace_ids(workspace: str) -> None:
+    with pytest.raises(ValueError, match="workspace id"):
+        Settings(workspace_id=workspace)

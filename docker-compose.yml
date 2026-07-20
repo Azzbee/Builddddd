@@ -89,7 +89,8 @@ services:
       context: ./web
       dockerfile: Dockerfile
     environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:8000
+      LATTICE_API_BASE: http://api:8000
+      LATTICE_AUTH_TOKEN: ${LATTICE_AUTH_TOKEN:-}
     ports:
       - "3000:3000"
     depends_on:

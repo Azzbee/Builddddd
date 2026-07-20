@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -54,7 +55,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # tighten in production via config/reverse proxy
+        allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -66,9 +67,16 @@ def create_app() -> FastAPI:
     async def _rate_limit_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
         if request.url.path in _EXEMPT:
             return await call_next(request)
-        # Key by auth token when present, else client host (best-effort behind a proxy).
         auth = request.headers.get("authorization")
-        key = auth or (request.client.host if request.client else "anonymous")
+        expected = f"Bearer {settings.auth_token}" if settings.auth_token else None
+        authenticated = (
+            expected is not None and auth is not None and hmac.compare_digest(auth, expected)
+        )
+        key = (
+            "authenticated"
+            if authenticated
+            else (request.client.host if request.client else "anonymous")
+        )
         allowed, retry_after = limiter.allow(key)
         if not allowed:
             REGISTRY.inc("lattice_http_rate_limited_total", help="Rate-limited requests")

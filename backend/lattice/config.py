@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -159,10 +159,12 @@ class Settings(BaseSettings):
     demo_mode: bool = False  # offline demo corpus + deterministic models at startup
     persistent: bool = False  # wire Postgres + Neo4j backends instead of in-memory
     workspace_id: str = "default"  # multi-tenant ready: every row carries this
+    max_workspaces: int = 32
     log_level: str = "INFO"
     log_json: bool = True
     data_dir: str = "/data"
     auth_token: str | None = None  # single-user bearer token
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     rate_limit_per_min: int = 240  # per-client request cap; 0 disables
     max_upload_mb: int = 50  # reject PDF uploads larger than this
     ingest_max_attempts: int = 3
@@ -183,6 +185,30 @@ class Settings(BaseSettings):
     rag: RagSettings = Field(default_factory=RagSettings)
     cost: CostSettings = Field(default_factory=CostSettings)
     watcher: WatcherSettings = Field(default_factory=WatcherSettings)
+
+    @field_validator("workspace_id")
+    @classmethod
+    def _valid_default_workspace(cls, value: str) -> str:
+        return validate_workspace_id(value)
+
+    @model_validator(mode="after")
+    def _production_guards(self) -> Settings:
+        if self.environment == "prod" and not self.auth_token:
+            raise ValueError("LATTICE_AUTH_TOKEN is required in production")
+        if self.environment == "prod" and "*" in self.cors_origins:
+            raise ValueError("wildcard CORS is not allowed in production")
+        return self
+
+
+def validate_workspace_id(value: str) -> str:
+    """Validate the workspace identifier used in headers and datastore scopes."""
+    import re
+
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", value):
+        raise ValueError(
+            "workspace id must be 1-64 characters using letters, numbers, dot, underscore, or hyphen"
+        )
+    return value
 
 
 @lru_cache(maxsize=1)

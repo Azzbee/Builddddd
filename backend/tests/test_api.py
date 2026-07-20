@@ -134,6 +134,26 @@ def test_rate_limiting_returns_429(monkeypatch: pytest.MonkeyPatch) -> None:
         get_settings.cache_clear()
 
 
+def test_rate_limit_cannot_be_rotated_with_unverified_auth_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lattice.config import get_settings
+
+    monkeypatch.setenv("LATTICE_RATE_LIMIT_PER_MIN", "2")
+    monkeypatch.delenv("LATTICE_AUTH_TOKEN", raising=False)
+    get_settings.cache_clear()
+    try:
+        c = TestClient(create_app())
+        codes = [
+            c.get("/papers", headers={"Authorization": f"Bearer invented-{index}"}).status_code
+            for index in range(5)
+        ]
+        assert codes[:2] == [200, 200]
+        assert codes[2:] == [429, 429, 429]
+    finally:
+        get_settings.cache_clear()
+
+
 def test_metrics_endpoint_records_requests(client: TestClient) -> None:
     client.get("/health")
     r = client.get("/metrics")
@@ -306,15 +326,28 @@ def test_query_non_stream_survives_top_level_non_object_json() -> None:
     # First reply is a bare array (invalid shape), then a proper final answer.
     llm = ScriptedLLM(["[1, 2, 3]", '{"answer": "recovered", "citations": [], "confidence": 0.3}'])
     ingestion = IngestionService(
-        settings=settings, llm=llm, parser=FakeParser(), vectors=InMemoryVectorStore(),
-        cards=InMemoryCardStore(), blobs=InMemoryBlobStore(), graph=FakeGraphStore(),
-        specter=Specter2Embedder(dim=64), chunk_embedder=ChunkEmbedder(dim=64),
+        settings=settings,
+        llm=llm,
+        parser=FakeParser(),
+        vectors=InMemoryVectorStore(),
+        cards=InMemoryCardStore(),
+        blobs=InMemoryBlobStore(),
+        graph=FakeGraphStore(),
+        specter=Specter2Embedder(dim=64),
+        chunk_embedder=ChunkEmbedder(dim=64),
         text_extractor=lambda b: "Real paper text. " * 60,
     )
     container = Container(
-        settings=settings, llm=llm, vectors=ingestion.vectors, cards=ingestion.cards,
-        jobs=InMemoryJobStore(), graph=ingestion.graph, chunk_embedder=ingestion.chunk_embedder,
-        ingestion=ingestion, watch=InMemoryWatchStore(), digests=InMemoryDigestStore(),
+        settings=settings,
+        llm=llm,
+        vectors=ingestion.vectors,
+        cards=ingestion.cards,
+        jobs=InMemoryJobStore(),
+        graph=ingestion.graph,
+        chunk_embedder=ingestion.chunk_embedder,
+        ingestion=ingestion,
+        watch=InMemoryWatchStore(),
+        digests=InMemoryDigestStore(),
         blobs=ingestion.blobs,
     )
     set_container(container)
@@ -481,10 +514,12 @@ def test_auth_enforced_when_token_set(monkeypatch: pytest.MonkeyPatch) -> None:
         app = create_app()
         c = TestClient(app)
         assert c.get("/papers").status_code == 401
+        assert c.get("/workspaces").status_code == 401
         assert c.get("/papers", headers={"Authorization": "Bearer secret"}).status_code in (
             200,
             500,
         )
+        assert c.get("/workspaces", headers={"Authorization": "Bearer secret"}).status_code == 200
     finally:
         monkeypatch.delenv("LATTICE_AUTH_TOKEN", raising=False)
         get_settings.cache_clear()
