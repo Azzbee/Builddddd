@@ -305,3 +305,24 @@ async def test_pipeline_failure_records_code() -> None:
     assert job.error_code == "corrupted_pdf"
     assert job.retryable is False
     assert job.attempts == 1
+
+
+async def test_pipeline_persists_unexpected_failures_and_caps_retries() -> None:
+    async def crash(ctx: PipelineContext) -> None:
+        raise RuntimeError("database password must not reach the job API")
+
+    pipe = IngestionPipeline({JobStage.PARSING: crash}, max_attempts=2)
+    ctx = PipelineContext(job=_job())
+
+    first = await pipe.run(ctx)
+    assert first.status == JobStatus.FAILED
+    assert first.error_code == "internal_error"
+    assert first.error_message == "an unexpected ingestion stage failure occurred"
+    assert first.retryable is True
+    assert first.attempts == 1
+
+    second = await pipe.run(ctx)
+    assert second.status == JobStatus.FAILED
+    assert second.error_code == "internal_error"
+    assert second.retryable is False
+    assert second.attempts == 2

@@ -38,10 +38,10 @@ class JobQueueUnavailable(RuntimeError):
 def _validate_retry(job: IngestJob, max_attempts: int) -> None:
     if job.status not in (JobStatus.FAILED, JobStatus.PAUSED):
         raise JobRetryRejected(f"job status {job.status} cannot be retried")
-    if not job.retryable:
-        raise JobRetryRejected(f"job failure {job.error_code or 'unknown'} is not retryable")
     if job.attempts >= max_attempts:
         raise JobRetryRejected(f"job reached the attempt limit ({max_attempts})")
+    if not job.retryable:
+        raise JobRetryRejected(f"job failure {job.error_code or 'unknown'} is not retryable")
 
 
 @dataclass

@@ -131,7 +131,7 @@ class IngestionPipeline:
                 job.attempts += 1
                 job.error_code = exc.code
                 job.error_message = str(exc)
-                job.retryable = exc.retryable
+                job.retryable = exc.retryable and job.attempts < self._max_attempts
                 job.status = JobStatus.FAILED
                 await self._persist(job)
                 log.error(
@@ -141,6 +141,21 @@ class IngestionPipeline:
                     code=exc.code,
                     retryable=exc.retryable,
                     attempts=job.attempts,
+                )
+                break
+            except Exception:
+                job.attempts += 1
+                job.error_code = "internal_error"
+                job.error_message = "an unexpected ingestion stage failure occurred"
+                job.retryable = job.attempts < self._max_attempts
+                job.status = JobStatus.FAILED
+                await self._persist(job)
+                log.exception(
+                    "ingest.stage_crashed",
+                    job_id=job.job_id,
+                    stage=target,
+                    attempts=job.attempts,
+                    retryable=job.retryable,
                 )
                 break
             else:
