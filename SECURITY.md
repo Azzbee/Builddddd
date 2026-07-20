@@ -19,6 +19,9 @@ for vulnerabilities. You will get an acknowledgement within a few days.
 - **Proxy boundary**: the Next.js proxy forwards an explicit header allowlist,
   cancels upstream work when the browser disconnects, and rejects request bodies
   over `LATTICE_PROXY_MAX_BODY_MB` before forwarding them.
+- **Browser policy**: every web response carries a Content Security Policy,
+  clickjacking protection, MIME-sniffing protection, a no-referrer policy, and a
+  denylist for unused camera, microphone, geolocation, and browsing-topics APIs.
 - **CORS**: origins come from `LATTICE_CORS_ORIGINS`; production rejects a
   wildcard. The default permits only `http://localhost:3000`.
 - **Workspace isolation**: workspace IDs are validated before store lookup and
