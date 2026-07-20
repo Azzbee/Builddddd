@@ -49,6 +49,7 @@ class CorpusStore(Protocol):
         specter: list[float] | None = None,
         aspects: dict[str, list[float]] | None = None,
         references: list[str] | None = None,
+        content_hash: str | None = None,
     ) -> None: ...
     async def get(self, paper_id: str) -> PaperCard | None: ...
     async def all_cards(self) -> list[PaperCard]: ...
@@ -70,6 +71,7 @@ class InMemoryCardStore:
         self._specters: dict[str, list[float] | None] = {}
         self._aspects: dict[str, dict[str, list[float]]] = {}
         self._references: dict[str, list[str]] = {}
+        self._content_hashes: dict[str, str] = {}
         self._superseded: dict[str, str] = {}  # paper_id -> superseding paper_id
 
     async def put_card(
@@ -78,6 +80,7 @@ class InMemoryCardStore:
         specter: list[float] | None = None,
         aspects: dict[str, list[float]] | None = None,
         references: list[str] | None = None,
+        content_hash: str | None = None,
     ) -> None:
         self._cards[card.paper_id] = card
         if specter is not None:
@@ -86,6 +89,8 @@ class InMemoryCardStore:
             self._aspects[card.paper_id] = aspects
         if references is not None:
             self._references[card.paper_id] = list(references)
+        if content_hash is not None:
+            self._content_hashes[card.paper_id] = content_hash
 
     async def get_card(self, paper_id: str) -> dict[str, Any] | None:
         card = self._cards.get(paper_id)
@@ -130,6 +135,7 @@ class InMemoryCardStore:
                 authors=[a.name for a in c.authors],
                 doi=c.doi,
                 arxiv_id=c.arxiv_id,
+                content_hash=self._content_hashes.get(c.paper_id),
             )
             for c in self._cards.values()
         ]

@@ -74,6 +74,20 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON ingest_jobs (status);
 
+-- Inputs and stage outputs required to continue an ingest after a worker restart.
+-- Kept separate from ingest_jobs so job listings never fetch PDF bytes or large JSON.
+CREATE TABLE IF NOT EXISTS ingest_artifacts (
+    job_id        TEXT PRIMARY KEY REFERENCES ingest_jobs(job_id) ON DELETE CASCADE,
+    workspace_id  TEXT NOT NULL DEFAULT 'default',
+    raw_pdf       BYTEA,
+    document      JSONB,
+    card          JSONB,
+    chunks        JSONB NOT NULL DEFAULT '[]',
+    extra         JSONB NOT NULL DEFAULT '{}',
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ingest_artifacts_workspace ON ingest_artifacts (workspace_id);
+
 -- Every weight change, old -> new, with reason. Nothing is silently overwritten.
 CREATE TABLE IF NOT EXISTS edge_audit (
     id            BIGSERIAL PRIMARY KEY,

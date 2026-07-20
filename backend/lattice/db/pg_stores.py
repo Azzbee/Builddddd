@@ -19,8 +19,8 @@ from lattice.ingestion.models import IngestJob
 SQL_UPSERT_PAPER = """
 INSERT INTO papers (paper_id, workspace_id, title, authors, year, venue, doi, arxiv_id,
                     s2_paper_id, card, confidence, needs_review, specter, aspects,
-                    reference_ids, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
+                    reference_ids, content_hash, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
 ON CONFLICT (paper_id) DO UPDATE SET
     title = EXCLUDED.title, authors = EXCLUDED.authors, year = EXCLUDED.year,
     venue = EXCLUDED.venue, doi = EXCLUDED.doi, arxiv_id = EXCLUDED.arxiv_id,
@@ -29,6 +29,7 @@ ON CONFLICT (paper_id) DO UPDATE SET
     specter = COALESCE(EXCLUDED.specter, papers.specter),
     aspects = COALESCE(EXCLUDED.aspects, papers.aspects),
     reference_ids = COALESCE(EXCLUDED.reference_ids, papers.reference_ids),
+    content_hash = COALESCE(EXCLUDED.content_hash, papers.content_hash),
     updated_at = now()
 """
 
@@ -139,6 +140,7 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
         specter: list[float] | None = None,
         aspects: dict[str, list[float]] | None = None,
         references: list[str] | None = None,
+        content_hash: str | None = None,
     ) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -158,6 +160,7 @@ class PgCardStore:  # pragma: no cover - exercised by integration tests
                 specter,
                 json.dumps(aspects) if aspects is not None else None,
                 json.dumps(references) if references is not None else None,
+                content_hash,
             )
 
     async def get_card(self, paper_id: str) -> dict[str, Any] | None:

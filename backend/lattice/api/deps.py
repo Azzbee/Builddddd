@@ -9,7 +9,7 @@ Tests override the container via :func:`set_container`.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import Header, HTTPException, status
 
@@ -23,6 +23,10 @@ from lattice.db.aux_stores import (
 )
 from lattice.db.blobs import BlobStore, InMemoryBlobStore
 from lattice.db.cards import CorpusStore, InMemoryCardStore, InMemoryJobStore, JobStore
+from lattice.db.ingest_artifacts import (
+    IngestArtifactStore,
+    InMemoryIngestArtifactStore,
+)
 from lattice.db.vector import InMemoryVectorStore, VectorStore
 from lattice.embeddings.base import make_text_embedder
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
@@ -47,6 +51,13 @@ class Container:
     watch: WatchStore
     digests: DigestStore
     blobs: BlobStore
+    artifacts: IngestArtifactStore = field(default_factory=InMemoryIngestArtifactStore)
+
+    def __post_init__(self) -> None:
+        # Manual containers in tests and integrations must share the same durable
+        # job state as their ingestion service, just like build_container does.
+        self.ingestion.jobs = self.jobs
+        self.ingestion.artifacts = self.artifacts
 
     def make_agent(self) -> RagAgent:
         toolbox = Toolbox(
@@ -90,6 +101,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
     vectors: VectorStore
     cards: CorpusStore
     jobs: JobStore
+    artifacts: IngestArtifactStore
     graph: GraphStore
     watch: WatchStore
     digests: DigestStore
@@ -97,6 +109,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
     reader = None
     if settings.persistent and _persist_pool is not None and _persist_graph is not None:
         from lattice.db.blobs import PgBlobStore
+        from lattice.db.ingest_artifacts import PgIngestArtifactStore
         from lattice.db.pg_stores import (
             PgCardStore,
             PgDigestStore,
@@ -109,6 +122,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         vectors = PgVectorStore(_persist_pool, ws, settings.rag.hybrid_vector_weight)
         cards = PgCardStore(_persist_pool, ws)
         jobs = PgJobStore(_persist_pool, ws)
+        artifacts = PgIngestArtifactStore(_persist_pool, ws)
         watch = PgWatchStore(_persist_pool, ws)
         digests = PgDigestStore(_persist_pool, ws)
         blobs = PgBlobStore(_persist_pool, ws)
@@ -118,6 +132,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         vectors = InMemoryVectorStore(hybrid_vector_weight=settings.rag.hybrid_vector_weight)
         cards = InMemoryCardStore()
         jobs = InMemoryJobStore()
+        artifacts = InMemoryIngestArtifactStore()
         watch = InMemoryWatchStore()
         digests = InMemoryDigestStore()
         blobs = InMemoryBlobStore()
@@ -146,6 +161,8 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         parser=parser,
         vectors=vectors,
         cards=cards,
+        jobs=jobs,
+        artifacts=artifacts,
         blobs=blobs,
         graph=graph,
         reader=reader,
@@ -161,6 +178,7 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         vectors=vectors,
         cards=cards,
         jobs=jobs,
+        artifacts=artifacts,
         graph=graph,
         chunk_embedder=chunk_embedder,
         ingestion=ingestion,
@@ -183,7 +201,9 @@ async def init_persistence(settings: Settings | None = None) -> None:
     from lattice.graph.store import Neo4jGraphStore
 
     pool = await create_pg_pool(
-        settings.postgres.dsn, min_size=settings.postgres.pool_min, max_size=settings.postgres.pool_max
+        settings.postgres.dsn,
+        min_size=settings.postgres.pool_min,
+        max_size=settings.postgres.pool_max,
     )
     schema_sql = (Path(__file__).parent.parent / "db" / "schema.sql").read_text()
     async with pool.acquire() as conn:

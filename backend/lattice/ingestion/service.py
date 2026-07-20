@@ -26,7 +26,11 @@ from lattice.core.hashing import content_hash, normalize_arxiv, normalize_doi, s
 from lattice.core.llm import LLMClient
 from lattice.core.logging import get_logger
 from lattice.db.blobs import BlobStore, InMemoryBlobStore
-from lattice.db.cards import CorpusStore, StoredFeatures
+from lattice.db.cards import CorpusStore, InMemoryJobStore, JobStore, StoredFeatures
+from lattice.db.ingest_artifacts import (
+    IngestArtifactStore,
+    InMemoryIngestArtifactStore,
+)
 from lattice.db.vector import VectorRecord, VectorStore
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
 from lattice.embeddings.specter2 import Specter2Embedder
@@ -58,6 +62,7 @@ from lattice.ingestion.dedup import PaperIdentity
 from lattice.ingestion.models import (
     IngestJob,
     JobStage,
+    JobStatus,
     ParsedDocument,
     SourceType,
 )
@@ -95,6 +100,8 @@ class IngestionService:
     parser: Parser
     vectors: VectorStore
     cards: CorpusStore
+    jobs: JobStore = field(default_factory=InMemoryJobStore)
+    artifacts: IngestArtifactStore = field(default_factory=InMemoryIngestArtifactStore)
     #: Raw PDF storage for the in-app reader + citation deep-linking.
     blobs: BlobStore = field(default_factory=InMemoryBlobStore)
     graph: GraphStore = field(default_factory=FakeGraphStore)
@@ -201,18 +208,51 @@ class IngestionService:
 
     async def ingest_pdf(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
         await self.hydrate()
-        job = IngestJob(
-            job_id=stable_id("job", source_ref, content_hash(pdf_bytes)),
+        digest = content_hash(pdf_bytes)
+        job_id = stable_id("job", self.settings.workspace_id, source_ref, digest)
+        existing = await self.jobs.get(job_id)
+        if existing is not None and existing.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
+            return existing
+        job = existing or IngestJob(
+            job_id=job_id,
             workspace_id=self.settings.workspace_id,
             source_type=SourceType.FILE,
             source_ref=source_ref,
-            content_hash=content_hash(pdf_bytes),
+            content_hash=digest,
         )
+        saved = await self.artifacts.get(job_id)
         ctx = PipelineContext(job=job, raw_pdf=pdf_bytes)
+        if saved is not None:
+            saved.restore(ctx)
+            ctx.raw_pdf = ctx.raw_pdf or pdf_bytes
+        await self.jobs.save(job)
+        await self.artifacts.save_context(ctx)
+        return await self._run_context(ctx)
+
+    async def resume_job(self, job_id: str) -> IngestJob | None:
+        """Resume a persisted paused or failed job from its last completed stage."""
+        await self.hydrate()
+        job = await self.jobs.get(job_id)
+        if job is None:
+            return None
+        if job.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
+            return job
+        saved = await self.artifacts.get(job_id)
+        if saved is None or saved.raw_pdf is None:
+            return job
+        ctx = PipelineContext(job=job)
+        saved.restore(ctx)
+        return await self._run_context(ctx)
+
+    async def _run_context(self, ctx: PipelineContext) -> IngestJob:
+        await self._restore_runtime_state(ctx)
         ctx.extra["cost"] = CostTracker(
             per_job_cap=self.settings.cost.per_job_usd_cap,
             daily_cap=self.settings.cost.daily_usd_cap,
         )
+        cost = ctx.extra["cost"]
+        if isinstance(cost, CostTracker):
+            cost.job_usage.cost_usd = ctx.job.cost_usd
         pipeline = IngestionPipeline(
             {
                 JobStage.PARSING: self._parse,
@@ -220,9 +260,48 @@ class IngestionService:
                 JobStage.ENRICHING: self._enrich,
                 JobStage.EMBEDDING: self._embed,
                 JobStage.LINKING: self._link,
-            }
+            },
+            store=self.jobs,
+            artifact_store=self.artifacts,
+            max_attempts=self.settings.ingest_max_attempts,
         )
         return await pipeline.run(ctx)
+
+    async def _restore_runtime_state(self, ctx: PipelineContext) -> None:
+        """Restore process-local embedding state needed by the linking stage."""
+        feature = ctx.extra.get("_paper_feature")
+        if not isinstance(feature, dict) or ctx.job.paper_id is None:
+            return
+        import numpy as np
+
+        pid = ctx.job.paper_id
+        specter = feature.get("specter")
+        methodology = feature.get("methodology_embedding")
+        self._features[pid] = PaperFeatures(
+            paper_id=pid,
+            specter=np.asarray(specter, dtype=float) if isinstance(specter, list) else None,
+            methodology_embedding=(
+                np.asarray(methodology, dtype=float) if isinstance(methodology, list) else None
+            ),
+            methods=set(feature.get("methods", [])),
+            datasets=set(feature.get("datasets", [])),
+            references=set(feature.get("references", [])),
+            ingested_at=datetime.fromisoformat(str(feature["ingested_at"])),
+        )
+        external_ids = ctx.extra.get("_external_ids")
+        if isinstance(external_ids, list):
+            self._external_ids[pid] = {str(value) for value in external_ids}
+        aspects = ctx.extra.get("_aspects")
+        if isinstance(aspects, dict):
+            self._aspects[pid] = {
+                str(name): [float(value) for value in values]
+                for name, values in aspects.items()
+                if isinstance(values, list)
+            }
+        record_values = ctx.extra.get("_chunk_records")
+        if isinstance(record_values, list):
+            records = [VectorRecord(**value) for value in record_values if isinstance(value, dict)]
+            await self.vectors.upsert_chunks(records)
 
     # ------------------------------------------------------------------ stages
     async def _parse(self, ctx: PipelineContext) -> None:
@@ -373,6 +452,7 @@ class IngestionService:
 
         refs_value = ctx.extra.get("reference_ids")
         refs = set(refs_value) if isinstance(refs_value, list | set) else set()
+        ingested_at = datetime.now(UTC)
         self._features[pid] = PaperFeatures(
             paper_id=pid,
             specter=np.asarray(paper_emb.vector, dtype=float),
@@ -380,10 +460,21 @@ class IngestionService:
             methods=card.normalized_methods,
             datasets=card.normalized_datasets,
             references=refs,
-            ingested_at=datetime.now(UTC),
+            ingested_at=ingested_at,
         )
         self._external_ids[pid] = card.external_ids
         self._aspects[pid] = aspects
+        ctx.extra["_paper_feature"] = {
+            "specter": paper_emb.vector,
+            "methodology_embedding": aspects["methodology"],
+            "methods": sorted(card.normalized_methods),
+            "datasets": sorted(card.normalized_datasets),
+            "references": sorted(refs),
+            "ingested_at": ingested_at.isoformat(),
+        }
+        ctx.extra["_external_ids"] = sorted(card.external_ids)
+        ctx.extra["_aspects"] = aspects
+        ctx.extra["_chunk_records"] = [record.__dict__ for record in records]
 
     async def _link(self, ctx: PipelineContext) -> None:
         assert ctx.card is not None and ctx.job.paper_id is not None
@@ -460,6 +551,7 @@ class IngestionService:
             specter=specter,
             aspects=self._aspects.get(pid),
             references=sorted(new_feat.references),
+            content_hash=ctx.job.content_hash,
         )
         # Persist the source PDF last (after the card exists, for the FK), so the
         # reader can open it and citations can deep-link to a page.
@@ -1344,5 +1436,3 @@ class IngestionService:
             if direct:
                 out[cand.paper_id] = CitationSignal(direct_citation=True)
         return out
-
-

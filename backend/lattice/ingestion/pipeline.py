@@ -53,6 +53,10 @@ class JobStore(Protocol):
     async def save(self, job: IngestJob) -> None: ...
 
 
+class ArtifactStore(Protocol):
+    async def save_context(self, ctx: PipelineContext) -> None: ...
+
+
 class _NullStore:
     async def save(self, job: IngestJob) -> None:  # pragma: no cover - trivial
         return None
@@ -65,10 +69,12 @@ class IngestionPipeline:
         self,
         handlers: dict[JobStage, StageFn],
         store: JobStore | None = None,
+        artifact_store: ArtifactStore | None = None,
         max_attempts: int = 3,
     ):
         self._handlers = handlers
         self._store = store or _NullStore()
+        self._artifact_store = artifact_store
         self._max_attempts = max_attempts
 
     async def _persist(self, job: IngestJob) -> None:
@@ -78,8 +84,11 @@ class IngestionPipeline:
     async def run(self, ctx: PipelineContext) -> IngestJob:
         """Advance the job until it reaches a terminal or paused state."""
         job = ctx.job
-        # A PAUSED/FAILED job re-entering run() resumes from its last completed
-        # stage; the loop only stops on a terminal status (or an inner pause break).
+        if job.status in (JobStatus.PAUSED, JobStatus.FAILED):
+            if job.attempts >= self._max_attempts:
+                return job
+            job.status = JobStatus.QUEUED
+        await self._persist(job)
         while not job.is_terminal:
             target = next_stage(job.stage)
             if target is None or target == JobStage.DONE:
@@ -129,9 +138,15 @@ class IngestionPipeline:
                 )
                 break
             else:
+                cost = ctx.extra.get("cost")
+                usage = getattr(cost, "job_usage", None)
+                if usage is not None:
+                    job.cost_usd = float(getattr(usage, "cost_usd", job.cost_usd))
                 job.stage = target
                 job.error_code = None
                 job.error_message = None
+                if self._artifact_store is not None:
+                    await self._artifact_store.save_context(ctx)
                 await self._persist(job)
                 log.info("ingest.stage_complete", job_id=job.job_id, stage=target)
 

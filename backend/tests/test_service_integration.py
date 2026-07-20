@@ -11,9 +11,11 @@ import pytest
 from lattice.config import Settings
 from lattice.core.llm import LLMMessage, LLMResponse
 from lattice.db.cards import InMemoryCardStore
+from lattice.db.ingest_artifacts import InMemoryIngestArtifactStore
 from lattice.db.vector import InMemoryVectorStore
 from lattice.embeddings.specter2 import Specter2Embedder
 from lattice.graph.store import FakeGraphStore
+from lattice.ingestion.dedup import PaperIdentity
 from lattice.ingestion.models import (
     JobStatus,
     ParsedDocument,
@@ -67,10 +69,12 @@ def _doc_ids(
 class FakeParser:
     def __init__(self, docs: dict[str, ParsedDocument]) -> None:
         self.docs = docs
+        self.calls = 0
 
     async def process_fulltext(
         self, pdf_bytes: bytes, filename: str = "paper.pdf"
     ) -> ParsedDocument:
+        self.calls += 1
         return self.docs[filename]
 
 
@@ -403,10 +407,44 @@ async def test_reingest_is_idempotent_duplicate() -> None:
     first = await svc.ingest_pdf("paper_a.pdf", _pdf("A"))
     assert first.status == JobStatus.SUCCEEDED
 
-    # Re-ingest identical content -> deduped, not a second paper.
+    # Repeating the same deterministic job returns its existing terminal result.
     second = await svc.ingest_pdf("paper_a.pdf", _pdf("A"))
-    assert second.status == JobStatus.DUPLICATE
+    assert second.status == JobStatus.SUCCEEDED
+    assert second.job_id == first.job_id
     assert len(await svc.cards.all_cards()) == 1
+
+
+async def test_failed_ingest_resumes_without_repeating_completed_parse() -> None:
+    parser = FakeParser({"paper.pdf": _doc("LSTM copper", "LSTM", ["10.1/a"])})
+    artifacts = InMemoryIngestArtifactStore()
+    svc = _service(parser, ScriptedLLM(["not-json"] * 3), FakeGraphStore())
+    svc.artifacts = artifacts
+
+    failed = await svc.ingest_pdf("paper.pdf", _pdf("A"))
+    assert failed.status == JobStatus.FAILED
+    assert failed.stage.value == "parsing"
+    assert parser.calls == 1
+    saved = await artifacts.get(failed.job_id)
+    assert saved is not None and saved.document is not None and saved.raw_pdf == _pdf("A")
+
+    svc.llm = ScriptedLLM([_content(["LSTM"])])
+    resumed = await svc.resume_job(failed.job_id)
+    assert resumed is not None and resumed.status == JobStatus.SUCCEEDED
+    assert parser.calls == 1
+
+
+async def test_content_hash_dedup_survives_card_store_rehydration() -> None:
+    cards = InMemoryCardStore()
+    parser = FakeParser({"first.pdf": _doc("Original title", "LSTM", ["10.1/a"])})
+    svc = _service(parser, ScriptedLLM([_content(["LSTM"])]), FakeGraphStore(), cards=cards)
+    first = await svc.ingest_pdf("first.pdf", _pdf("SAME"))
+    assert first.status == JobStatus.SUCCEEDED
+
+    index = await cards.corpus_index()
+    duplicate = index.find_duplicate(
+        PaperIdentity("incoming", "Different metadata", content_hash=first.content_hash)
+    )
+    assert duplicate.is_duplicate and duplicate.reason == "content_hash"
 
 
 async def test_corrupted_pdf_fails_gracefully() -> None:
@@ -422,6 +460,7 @@ def test_assign_paper_id_prefers_doi() -> None:
     by_doi2 = assign_paper_id(ParsedDocument(title="different", doi="https://doi.org/10.1/x"), "ws")
     assert by_doi == by_doi2  # same DOI -> same id regardless of title
 
+
 # ----------------------------------------------------------------- supersession
 async def test_published_version_supersedes_preprint() -> None:
     # The living-graph story: the arXiv preprint is ingested first; when the
@@ -434,7 +473,9 @@ async def test_published_version_supersedes_preprint() -> None:
     graph = FakeGraphStore()
     docs = {
         "pre.pdf": _doc_ids("Copper forecasting with LSTM", "LSTM attention", arxiv="2401.00001"),
-        "pub.pdf": _doc_ids("Copper Forecasting with LSTM", "LSTM attention", doi="10.1234/jf.2024.7"),
+        "pub.pdf": _doc_ids(
+            "Copper Forecasting with LSTM", "LSTM attention", doi="10.1234/jf.2024.7"
+        ),
     }
     svc = _service(
         FakeParser(docs),
@@ -453,9 +494,7 @@ async def test_published_version_supersedes_preprint() -> None:
     assert await shared_cards.superseded_map() == {pre.paper_id: pub.paper_id}
     # Graph-level: SUPERSEDED_BY edge written, preprint's edges invalidated.
     assert any("SUPERSEDED_BY" in q for q, _ in graph.calls)
-    assert any(
-        "invalid_at = $now" in q and p.get("pid") == pre.paper_id for q, p in graph.calls
-    )
+    assert any("invalid_at = $now" in q and p.get("pid") == pre.paper_id for q, p in graph.calls)
     # The published version did NOT link to its own preprint.
     assert svc._related.get(pub.paper_id) == []
     # Candidate pool and mirrors: preprint gone.
@@ -538,6 +577,7 @@ async def test_superseded_paper_stays_out_of_pool_after_restart() -> None:
     assert svc2._features[pub.paper_id].methodology_embedding is not None
     assert pub.paper_id in svc2._aspects
 
+
 # --------------------------------------------------- incremental contradictions
 def _content_with_claim(methods: list[str], claim: str) -> str:
     d = json.loads(_content(methods))
@@ -600,6 +640,7 @@ async def test_incremental_contradictions_can_be_disabled() -> None:
     await svc.ingest_pdf("b.pdf", _pdf("B"))
     assert await svc.get_claim_relations("CONTRADICTS") == []
 
+
 # ----------------------------------------------------------- calibrator sampling
 async def test_calibrator_refit_is_bounded_on_large_corpora(
     monkeypatch: pytest.MonkeyPatch,
@@ -610,9 +651,7 @@ async def test_calibrator_refit_is_bounded_on_large_corpora(
     from lattice.ingestion import service as service_mod
 
     svc = _service(FakeParser({}), ScriptedLLM([]), FakeGraphStore())
-    rng_vecs = [
-        np.array([1.0, float(i % 7), float(i % 3)], dtype=float) for i in range(500)
-    ]
+    rng_vecs = [np.array([1.0, float(i % 7), float(i % 3)], dtype=float) for i in range(500)]
     for i, v in enumerate(rng_vecs):
         svc._features[f"p{i}"] = PaperFeatures(paper_id=f"p{i}", specter=v)
 
@@ -628,6 +667,7 @@ async def test_calibrator_refit_is_bounded_on_large_corpora(
     assert calibrator.fitted
     cap = svc._CALIBRATION_VECS
     assert calls["n"] <= cap * (cap - 1) // 2, "refit must be bounded, not all-pairs"
+
 
 # --------------------------------------------------- citation ids + references
 class StubEnricher:

@@ -6,6 +6,7 @@ import pytest
 from lattice.api import deps
 from lattice.api.deps import build_container
 from lattice.config import Settings
+from lattice.db.ingest_artifacts import PgIngestArtifactStore
 from lattice.db.pg_stores import PgCardStore, PgJobStore
 from lattice.db.vector import PgVectorStore
 from lattice.graph.reader import Neo4jGraphReader
@@ -32,6 +33,7 @@ def test_persistent_branch_wires_pg_and_neo4j() -> None:
     assert isinstance(c.vectors, PgVectorStore)
     assert isinstance(c.cards, PgCardStore)
     assert isinstance(c.jobs, PgJobStore)
+    assert isinstance(c.artifacts, PgIngestArtifactStore)
     assert isinstance(c.ingestion.reader, Neo4jGraphReader)
 
 

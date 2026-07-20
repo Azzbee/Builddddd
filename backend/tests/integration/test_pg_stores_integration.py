@@ -29,6 +29,7 @@ async def pool():  # type: ignore[no-untyped-def]
         await conn.execute(SCHEMA.read_text())
         await conn.execute("DELETE FROM pdf_blobs")
         await conn.execute("DELETE FROM chunks")
+        await conn.execute("DELETE FROM ingest_artifacts")
         await conn.execute("DELETE FROM ingest_jobs")
         await conn.execute("DELETE FROM watch_queue")
         await conn.execute("DELETE FROM digests")
@@ -37,6 +38,7 @@ async def pool():  # type: ignore[no-untyped-def]
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM pdf_blobs")
         await conn.execute("DELETE FROM chunks")
+        await conn.execute("DELETE FROM ingest_artifacts")
         await conn.execute("DELETE FROM ingest_jobs")
         await conn.execute("DELETE FROM watch_queue")
         await conn.execute("DELETE FROM digests")
@@ -60,7 +62,7 @@ def _card(pid: str, title: str) -> PaperCard:
 
 async def test_card_roundtrip_and_corpus_index(pool) -> None:  # type: ignore[no-untyped-def]
     store = PgCardStore(pool, "ws")
-    await store.put_card(_card("p1", "Copper LSTM"))
+    await store.put_card(_card("p1", "Copper LSTM"), content_hash="sha256-one")
     await store.put_card(_card("p2", "Copper GRU"))
 
     got = await store.get_card("p1")
@@ -76,6 +78,12 @@ async def test_card_roundtrip_and_corpus_index(pool) -> None:  # type: ignore[no
         )
     )
     assert dup.is_duplicate and dup.existing_paper_id == "p1"
+    by_hash = index.find_duplicate(
+        type(index.titles[0])(
+            paper_id="x", title="Different", authors=[], content_hash="sha256-one"
+        )
+    )
+    assert by_hash.is_duplicate and by_hash.reason == "content_hash"
 
 
 async def test_specter_persists_and_load_features_rehydrates(pool) -> None:  # type: ignore[no-untyped-def]
@@ -126,6 +134,40 @@ async def test_job_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
     assert got is not None and got.status == JobStatus.SUCCEEDED and got.paper_id == "p1"
     assert got.stage == JobStage.LINKING
     assert len(await store.all_jobs()) == 1
+
+
+async def test_ingest_artifacts_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
+    from lattice.db.ingest_artifacts import IngestArtifacts, PgIngestArtifactStore
+    from lattice.ingestion.chunker import Chunk
+    from lattice.ingestion.models import ParsedDocument, ParsedSection, RegionType
+
+    jobs = PgJobStore(pool, "ws")
+    await jobs.save(
+        IngestJob(job_id="j-art", workspace_id="ws", source_type=SourceType.FILE, source_ref="a")
+    )
+    store = PgIngestArtifactStore(pool, "ws")
+    document = ParsedDocument(
+        title="Paper", sections=[ParsedSection(section_id="s1", title="Body", text="text")]
+    )
+    chunk = Chunk(
+        chunk_id="c1",
+        paper_id="p1",
+        section_id="s1",
+        section_title="Body",
+        ordinal=0,
+        text="source text",
+        char_start=0,
+        char_end=11,
+        region_type=RegionType.PROSE,
+    )
+    await store.save(
+        "j-art",
+        IngestArtifacts(raw_pdf=b"%PDF", document=document, chunks=[chunk], extra={"refs": ["x"]}),
+    )
+    saved = await store.get("j-art")
+    assert saved is not None
+    assert saved.raw_pdf == b"%PDF" and saved.document == document
+    assert saved.chunks == [chunk] and saved.extra == {"refs": ["x"]}
 
 
 async def test_job_workspace_isolation(pool) -> None:  # type: ignore[no-untyped-def]
