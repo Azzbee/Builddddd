@@ -13,6 +13,7 @@ from lattice.api.deps import Container, build_container
 from lattice.config import get_settings
 from lattice.core.logging import configure_logging, get_logger
 from lattice.enrichment.arxiv_watcher import ArxivWatcher
+from lattice.ingestion.models import JobStatus
 
 log = get_logger("worker")
 
@@ -29,6 +30,16 @@ async def ingest_job_task(ctx: dict[str, Any], workspace_id: str, job_id: str) -
     job = await container.ingestion.resume_job(job_id)
     if job is None:
         raise RuntimeError(f"ingest job not found: {job_id}")
+    if (
+        job.status == JobStatus.FAILED
+        and job.retryable
+        and job.attempts < container.settings.ingest_max_attempts
+    ):
+        from arq import Retry
+
+        delay = min(60, 2 ** max(0, job.attempts - 1))
+        log.warning("ingest.retry_scheduled", job_id=job_id, delay_s=delay)
+        raise Retry(defer=delay)
     result: dict[str, Any] = job.model_dump(mode="json")
     return result
 
