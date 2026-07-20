@@ -32,6 +32,8 @@ before returning 202, then sends only workspace and job IDs through Redis. Poll
 `GET /ingest/jobs/{id}` until the status is terminal. Retry is capped by
 `LATTICE_INGEST_MAX_ATTEMPTS`. Job responses include `retryable`; retry returns
 409 for terminal failures, active or completed jobs, and jobs at the attempt cap.
+If Redis rejects submission, the API returns 503 and persists the job as a
+retryable `queue_unavailable` failure instead of leaving it stuck as queued.
 
 ## Papers & graph
 | Method | Path | Purpose |

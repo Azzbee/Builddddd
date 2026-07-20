@@ -156,6 +156,7 @@ cap is raised. Per-query cost is logged and returned in the agent result.
 | `duplicate` ("outdated preprint") | published version already ingested | job DUPLICATE; the corpus keeps the published version |
 | published version of an ingested preprint | version supersession | ingests + SUPERSEDED_BY; preprint's edges invalidated, out of analytics |
 | `parser_timeout` | GROBID slow | retryable; worker retries with backoff |
+| `queue_unavailable` | Redis rejected dispatch | job FAILED and retryable; restore Redis, then retry |
 | `cost_cap_exceeded` | spend cap hit | job PAUSED; resume after reset |
 | `rate_limited` | S2/OpenAlex throttling | cached + backoff; degrades to text-only similarity |
 

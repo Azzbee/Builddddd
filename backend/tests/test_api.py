@@ -262,6 +262,33 @@ def test_ingest_bad_pdf_fails_gracefully(client: TestClient) -> None:
     assert retry.json()["detail"] == "job failure corrupted_pdf is not retryable"
 
 
+def test_ingest_returns_503_when_queue_is_unavailable(client: TestClient) -> None:
+    from lattice.api import deps
+    from lattice.ingestion.dispatch import JobQueueUnavailable
+    from lattice.ingestion.models import IngestJob
+
+    class UnavailableDispatcher:
+        asynchronous = True
+
+        async def submit(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
+            raise JobQueueUnavailable("Redis did not accept the ingestion job")
+
+        async def retry(self, job_id: str) -> IngestJob | None:
+            raise JobQueueUnavailable("Redis did not accept the ingestion job")
+
+    assert deps._override is not None
+    deps._override.dispatcher = UnavailableDispatcher()
+
+    upload = client.post(
+        "/ingest/file",
+        files={"file": ("paper.pdf", _pdf("A"), "application/pdf")},
+    )
+    retry = client.post("/ingest/jobs/job-id/retry")
+    assert upload.status_code == 503
+    assert retry.status_code == 503
+    assert upload.json()["detail"] == "Redis did not accept the ingestion job"
+
+
 def test_graph_and_jobs(client: TestClient) -> None:
     client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
     client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})

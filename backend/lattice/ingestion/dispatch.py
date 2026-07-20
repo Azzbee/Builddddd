@@ -31,6 +31,10 @@ class JobRetryRejected(ValueError):
     """A job cannot be requeued in its current persisted state."""
 
 
+class JobQueueUnavailable(RuntimeError):
+    """Redis did not accept a staged ingestion job."""
+
+
 def _validate_retry(job: IngestJob, max_attempts: int) -> None:
     if job.status not in (JobStatus.FAILED, JobStatus.PAUSED):
         raise JobRetryRejected(f"job status {job.status} cannot be retried")
@@ -66,9 +70,9 @@ class ArqIngestionDispatcher:
 
     async def submit(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
         job = await self.service.stage_pdf(source_ref, pdf_bytes)
-        if job.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
+        if job.status != JobStatus.QUEUED:
             return job
-        await self._enqueue(job)
+        await self._enqueue_or_fail(job)
         return job
 
     async def retry(self, job_id: str) -> IngestJob | None:
@@ -80,8 +84,19 @@ class ArqIngestionDispatcher:
         job.error_code = None
         job.error_message = None
         await self.service.jobs.save(job)
-        await self._enqueue(job)
+        await self._enqueue_or_fail(job)
         return job
+
+    async def _enqueue_or_fail(self, job: IngestJob) -> None:
+        try:
+            await self._enqueue(job)
+        except Exception as exc:
+            job.status = JobStatus.FAILED
+            job.error_code = "queue_unavailable"
+            job.error_message = "Redis did not accept the ingestion job"
+            job.retryable = True
+            await self.service.jobs.save(job)
+            raise JobQueueUnavailable(job.error_message) from exc
 
     async def _enqueue(self, job: IngestJob) -> None:
         queue_id = f"ingest:{job.job_id}:{job.attempts}"
