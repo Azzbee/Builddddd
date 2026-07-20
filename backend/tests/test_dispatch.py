@@ -117,3 +117,4 @@ async def test_arq_queue_failure_is_persisted_and_retryable() -> None:
     redis.fail = False
     retried = await dispatcher.retry(failed.job_id)
     assert retried is not None and retried.status == JobStatus.QUEUED
+    assert retried.retryable is False

@@ -83,6 +83,7 @@ class ArqIngestionDispatcher:
         job.status = JobStatus.QUEUED
         job.error_code = None
         job.error_message = None
+        job.retryable = False
         await self.service.jobs.save(job)
         await self._enqueue_or_fail(job)
         return job
