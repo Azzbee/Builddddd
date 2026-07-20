@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from lattice.config import Settings, get_settings
+from lattice.config import PostgresSettings, Settings, SimilarityWeights, get_settings
 from lattice.core.cost import CostTracker, Usage, estimate_cost, price_for
 from lattice.core.errors import CostCapExceeded
 from lattice.core.hashing import (
@@ -149,6 +149,33 @@ def test_production_settings_require_auth_and_restrict_cors() -> None:
         cors_origins=["https://lattice.example"],
     )
     assert settings.cors_origins == ["https://lattice.example"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_workspaces", 0),
+        ("rate_limit_per_min", -1),
+        ("max_upload_mb", 0),
+        ("ingest_max_attempts", 0),
+        ("readiness_timeout_s", 0),
+    ],
+)
+def test_settings_reject_unsafe_runtime_limits(field: str, value: int) -> None:
+    with pytest.raises(ValueError):
+        Settings(**{field: value})
+
+
+def test_similarity_settings_require_valid_probabilities_and_a_nonzero_weight() -> None:
+    with pytest.raises(ValueError):
+        SimilarityWeights(tau=1.1)
+    with pytest.raises(ValueError, match="at least one similarity weight"):
+        SimilarityWeights(alpha=0, beta=0, gamma=0, delta=0)
+
+
+def test_postgres_settings_require_ordered_pool_limits() -> None:
+    with pytest.raises(ValueError, match="pool_max"):
+        PostgresSettings(pool_min=5, pool_max=4)
 
 
 @pytest.mark.parametrize("workspace", ["", "../escape", "white space", "x" * 65])
