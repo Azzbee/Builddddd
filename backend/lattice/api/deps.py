@@ -295,14 +295,25 @@ async def init_persistence(settings: Settings | None = None) -> None:
         min_size=settings.postgres.pool_min,
         max_size=settings.postgres.pool_max,
     )
-    schema_sql = (Path(__file__).parent.parent / "db" / "schema.sql").read_text()
-    async with pool.acquire() as conn:
-        await conn.execute(schema_sql)
-    neo4j = Neo4jGraphStore(settings.neo4j)
-    await apply_schema(neo4j)
+    neo4j: Neo4jGraphStore | None = None
+    redis = None
+    try:
+        schema_sql = (Path(__file__).parent.parent / "db" / "schema.sql").read_text()
+        async with pool.acquire() as conn:
+            await conn.execute(schema_sql)
+        neo4j = Neo4jGraphStore(settings.neo4j)
+        await apply_schema(neo4j)
+        redis = await create_pool(RedisSettings.from_dsn(settings.redis.url))
+    except Exception:
+        if redis is not None:
+            await redis.aclose()
+        if neo4j is not None:
+            await neo4j.close()
+        await pool.close()
+        raise
     _persist_pool = pool
     _persist_graph = neo4j
-    _persist_redis = await create_pool(RedisSettings.from_dsn(settings.redis.url))
+    _persist_redis = redis
 
 
 async def shutdown_persistence() -> None:

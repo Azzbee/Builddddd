@@ -84,3 +84,63 @@ async def test_persistence_health_marks_missing_backend_unready() -> None:
     checks = await deps.persistence_health(Settings(persistent=True))
 
     assert checks == {"postgres": True, "neo4j": True, "redis": False}
+
+
+async def test_init_persistence_closes_partial_resources_on_redis_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arq
+    from lattice.db import vector
+    from lattice.graph import schema, store
+
+    class SchemaConnection:
+        async def execute(self, query: str) -> None:
+            assert "CREATE TABLE" in query
+
+    class SchemaContext:
+        async def __aenter__(self) -> SchemaConnection:
+            return SchemaConnection()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class ClosablePool:
+        closed = False
+
+        def acquire(self) -> SchemaContext:
+            return SchemaContext()
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class ClosableGraph(FakeGraphStore):
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    pool = ClosablePool()
+    graph = ClosableGraph()
+
+    async def create_pool(*args: object, **kwargs: object) -> ClosablePool:
+        return pool
+
+    async def apply_graph_schema(graph_store: object) -> None:
+        assert graph_store is graph
+
+    async def fail_redis(*args: object, **kwargs: object) -> None:
+        raise ConnectionError("redis unavailable")
+
+    monkeypatch.setattr(vector, "create_pg_pool", create_pool)
+    monkeypatch.setattr(store, "Neo4jGraphStore", lambda _settings: graph)
+    monkeypatch.setattr(schema, "apply_schema", apply_graph_schema)
+    monkeypatch.setattr(arq, "create_pool", fail_redis)
+
+    with pytest.raises(ConnectionError, match="redis unavailable"):
+        await deps.init_persistence(Settings(persistent=True))
+
+    assert pool.closed is True
+    assert graph.closed is True
+    assert deps._persist_pool is None
+    assert deps._persist_graph is None
+    assert deps._persist_redis is None
