@@ -43,17 +43,33 @@ export default function OpportunitiesPage() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-white">Research opportunities</h1>
+          <h1 className="text-xl font-semibold text-white">
+            Research opportunities
+          </h1>
           <p className="text-sm text-muted">
-            The corpus&apos;s highest-pressure gaps, each turned into a grounded proposal:
-            what to try, the building blocks already in your library, why now, and the risks.
+            The corpus&apos;s highest-pressure gaps, each turned into a grounded
+            proposal: what to try, the building blocks already in your library,
+            why now, and the risks.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Facet value={rowFacet} onChange={setRowFacet} exclude={colFacet} label="rows" />
+          <Facet
+            value={rowFacet}
+            onChange={setRowFacet}
+            exclude={colFacet}
+            label="rows"
+          />
           <span className="text-muted">x</span>
-          <Facet value={colFacet} onChange={setColFacet} exclude={rowFacet} label="cols" />
-          <label className="flex items-center gap-1 text-xs text-muted" title="Query OpenAlex for the Empty vs Blind-spot signal">
+          <Facet
+            value={colFacet}
+            onChange={setColFacet}
+            exclude={rowFacet}
+            label="cols"
+          />
+          <label
+            className="flex items-center gap-1 text-xs text-muted"
+            title="Query OpenAlex for the Empty vs Blind-spot signal"
+          >
             <input
               type="checkbox"
               checked={useGlobal}
@@ -67,10 +83,15 @@ export default function OpportunitiesPage() {
         </div>
       </header>
 
-      {error && <div className="card border-bad text-bad">Backend unreachable: {error}</div>}
+      {error && (
+        <div className="card border-bad text-bad">
+          Backend unreachable: {error}
+        </div>
+      )}
       {!loading && proposals.length === 0 && !error && (
         <div className="card text-sm text-muted">
-          No empty cells for this facet pair — try another combination, or ingest more papers.
+          No empty cells for this facet pair — try another combination, or
+          ingest more papers.
         </div>
       )}
 
@@ -100,9 +121,16 @@ function ProposalCard({ p }: { p: ResearchProposal }) {
           <p className="mt-1 text-sm text-ink">{p.thesis}</p>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <span className={`chip border ${STATE_STYLE[p.state] ?? ""}`}>{p.state.replace("_", " ")}</span>
-          <span className="text-xs text-muted">confidence {p.confidence.toFixed(2)}</span>
-          <button className="text-xs text-accent hover:underline" onClick={copy}>
+          <span className={`chip border ${STATE_STYLE[p.state] ?? ""}`}>
+            {p.state.replace("_", " ")}
+          </span>
+          <span className="text-xs text-muted">
+            confidence {p.confidence.toFixed(2)}
+          </span>
+          <button
+            className="text-xs text-accent hover:underline"
+            onClick={copy}
+          >
             {copied ? "copied" : "copy brief"}
           </button>
         </div>
@@ -112,7 +140,9 @@ function ProposalCard({ p }: { p: ResearchProposal }) {
 
       <div className="flex flex-wrap gap-1">
         <span className="chip">why now: {p.why_now}</span>
-        {p.global_count > 0 && <span className="chip">~{p.global_count} papers worldwide</span>}
+        {p.global_count > 0 && (
+          <span className="chip">~{p.global_count} papers worldwide</span>
+        )}
       </div>
 
       {p.method_to_borrow && (
@@ -138,7 +168,9 @@ function ProposalCard({ p }: { p: ResearchProposal }) {
         <Block label="Baselines to beat">
           <div className="flex flex-wrap gap-1">
             {p.recommended_baselines.map((b) => (
-              <span key={b} className="chip">{b}</span>
+              <span key={b} className="chip">
+                {b}
+              </span>
             ))}
           </div>
         </Block>
@@ -147,7 +179,9 @@ function ProposalCard({ p }: { p: ResearchProposal }) {
       {p.open_problems.length > 0 && (
         <Block label="Open problems this addresses">
           <ul className="list-disc space-y-0.5 pl-4 text-xs text-ink">
-            {p.open_problems.map((o, i) => <li key={i}>{o}</li>)}
+            {p.open_problems.map((o, i) => (
+              <li key={i}>{o}</li>
+            ))}
           </ul>
         </Block>
       )}
@@ -155,7 +189,9 @@ function ProposalCard({ p }: { p: ResearchProposal }) {
       {p.risks.length > 0 && (
         <Block label="Risks">
           <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted">
-            {p.risks.map((r, i) => <li key={i}>{r}</li>)}
+            {p.risks.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
           </ul>
         </Block>
       )}
@@ -163,10 +199,18 @@ function ProposalCard({ p }: { p: ResearchProposal }) {
   );
 }
 
-function Block({ label, children }: { label: string; children: React.ReactNode }) {
+function Block({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
+        {label}
+      </div>
       {children}
     </div>
   );
@@ -187,7 +231,10 @@ function EvidenceList({ items }: { items: ProposalEvidence[] }) {
 function PaperLink({ e }: { e: ProposalEvidence }) {
   return (
     <span>
-      <Link href={`/papers/${e.paper_id}`} className="text-accent hover:underline">
+      <Link
+        href={`/papers/${e.paper_id}`}
+        className="text-accent hover:underline"
+      >
         {e.title}
       </Link>{" "}
       <span className="text-muted">

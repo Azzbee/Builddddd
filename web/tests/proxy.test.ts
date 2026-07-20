@@ -8,8 +8,9 @@ afterEach(() => {
 
 describe("API proxy", () => {
   it("injects the server token and forwards workspace, query, and body", async () => {
-    const upstream = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      Response.json({ status: "queued" }, { status: 202 }),
+    const upstream = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({ status: "queued" }, { status: 202 }),
     );
     vi.stubGlobal("fetch", upstream);
     const request = new Request("http://web.test/api/ingest/file?source=ui", {
@@ -34,18 +35,24 @@ describe("API proxy", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer server-secret");
     expect(headers.get("x-workspace-id")).toBe("research-2026");
-    expect(new TextDecoder().decode(init?.body as ArrayBuffer)).toBe('{"paper":"x"}');
+    expect(new TextDecoder().decode(init?.body as ArrayBuffer)).toBe(
+      '{"paper":"x"}',
+    );
   });
 
   it("streams binary and event responses without changing status or content type", async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(bytes, {
-          status: 206,
-          headers: { "content-type": "application/pdf", "content-range": "bytes 0-3/4" },
-        }),
+      vi.fn(
+        async () =>
+          new Response(bytes, {
+            status: 206,
+            headers: {
+              "content-type": "application/pdf",
+              "content-range": "bytes 0-3/4",
+            },
+          }),
       ),
     );
 
@@ -62,7 +69,10 @@ describe("API proxy", () => {
   });
 
   it("returns a typed 502 response when the backend cannot be reached", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("connection refused"))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new Error("connection refused"))),
+    );
 
     const response = await proxyRequest(
       new Request("http://web.test/api/health"),

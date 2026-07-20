@@ -6,7 +6,11 @@ import { api } from "@/lib/api";
 import type { PaperSummary } from "@/lib/types";
 
 export default function Overview() {
-  const [stats, setStats] = useState<{ papers: number; edges: number; communities: number }>();
+  const [stats, setStats] = useState<{
+    papers: number;
+    edges: number;
+    communities: number;
+  }>();
   const [papers, setPapers] = useState<PaperSummary[]>([]);
   const [error, setError] = useState<string>();
 
@@ -25,10 +29,16 @@ export default function Overview() {
     <div className="space-y-6">
       <header>
         <h1 className="text-xl font-semibold text-white">Overview</h1>
-        <p className="text-sm text-muted">A living map of your research field.</p>
+        <p className="text-sm text-muted">
+          A living map of your research field.
+        </p>
       </header>
 
-      {error && <div className="card border-bad text-bad">Backend unreachable: {error}</div>}
+      {error && (
+        <div className="card border-bad text-bad">
+          Backend unreachable: {error}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Papers" value={stats?.papers ?? papers.length} />
@@ -68,10 +78,22 @@ export default function Overview() {
   );
 }
 
-function Stat({ label, value, warn = false }: { label: string; value: number; warn?: boolean }) {
+function Stat({
+  label,
+  value,
+  warn = false,
+}: {
+  label: string;
+  value: number;
+  warn?: boolean;
+}) {
   return (
     <div className="card">
-      <div className={`text-2xl font-semibold ${warn ? "text-warn" : "text-white"}`}>{value}</div>
+      <div
+        className={`text-2xl font-semibold ${warn ? "text-warn" : "text-white"}`}
+      >
+        {value}
+      </div>
       <div className="text-xs text-muted">{label}</div>
     </div>
   );
@@ -80,7 +102,11 @@ function Stat({ label, value, warn = false }: { label: string; value: number; wa
 function Empty() {
   return (
     <p className="text-sm text-muted">
-      No papers yet. Head to <Link href="/ingest" className="text-accent">Ingest</Link> to add some.
+      No papers yet. Head to{" "}
+      <Link href="/ingest" className="text-accent">
+        Ingest
+      </Link>{" "}
+      to add some.
     </p>
   );
 }

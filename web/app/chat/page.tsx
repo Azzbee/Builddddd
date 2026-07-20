@@ -34,7 +34,15 @@ export default function ChatPage() {
     const idx = turns.length;
     setTurns((t) => [
       ...t,
-      { question, answer: "", citations: [], confidence: 0, abstained: false, trace: [], done: false },
+      {
+        question,
+        answer: "",
+        citations: [],
+        confidence: 0,
+        abstained: false,
+        trace: [],
+        done: false,
+      },
     ]);
 
     cancelRef.current = streamQuery(
@@ -44,7 +52,10 @@ export default function ChatPage() {
           const next = [...prev];
           const turn = { ...next[idx] };
           if (type === "status") {
-            turn.trace = [...turn.trace, { type, label: `classified: ${data.query_class}` }];
+            turn.trace = [
+              ...turn.trace,
+              { type, label: `classified: ${data.query_class}` },
+            ];
           } else if (type === "tool_call") {
             turn.trace = [...turn.trace, { type, label: `tool: ${data.name}` }];
           } else if (type === "final") {
@@ -85,8 +96,8 @@ export default function ChatPage() {
       <header>
         <h1 className="text-xl font-semibold text-white">Chat</h1>
         <p className="text-sm text-muted">
-          Ask about the corpus. Answers are grounded with citations; the agent says
-          &quot;I don&apos;t know&quot; when evidence is thin.
+          Ask about the corpus. Answers are grounded with citations; the agent
+          says &quot;I don&apos;t know&quot; when evidence is thin.
         </p>
       </header>
 
@@ -96,7 +107,9 @@ export default function ChatPage() {
             <div className="text-sm font-medium text-accent">{t.question}</div>
             {t.trace.length > 0 && (
               <details className="text-xs text-muted">
-                <summary className="cursor-pointer">how I got this ({t.trace.length} steps)</summary>
+                <summary className="cursor-pointer">
+                  how I got this ({t.trace.length} steps)
+                </summary>
                 <ul className="mt-1 space-y-0.5 pl-4">
                   {t.trace.map((s, j) => (
                     <li key={j}>· {s.label}</li>
@@ -107,20 +120,32 @@ export default function ChatPage() {
             <div className="card">
               {t.done ? (
                 <>
-                  {t.abstained && <div className="mb-1 chip border-warn text-warn">low confidence</div>}
-                  <p className="whitespace-pre-wrap text-sm text-ink">{t.answer}</p>
+                  {t.abstained && (
+                    <div className="mb-1 chip border-warn text-warn">
+                      low confidence
+                    </div>
+                  )}
+                  <p className="whitespace-pre-wrap text-sm text-ink">
+                    {t.answer}
+                  </p>
                   {t.citations.length > 0 && (
                     <ol className="mt-3 space-y-1 border-t border-border pt-2 text-xs text-muted">
                       {t.citations.map((c) => (
                         <li key={c.marker}>
                           [{c.marker}]{" "}
                           <Link
-                            href={c.page ? `/papers/${c.paper_id}?page=${c.page}` : `/papers/${c.paper_id}`}
+                            href={
+                              c.page
+                                ? `/papers/${c.paper_id}?page=${c.page}`
+                                : `/papers/${c.paper_id}`
+                            }
                             className="text-accent hover:underline"
                           >
                             {c.title || c.paper_id}
                           </Link>
-                          {c.evidence_location ? ` · ${c.evidence_location}` : ""}
+                          {c.evidence_location
+                            ? ` · ${c.evidence_location}`
+                            : ""}
                           {c.page ? ` · p.${c.page}` : ""}
                         </li>
                       ))}

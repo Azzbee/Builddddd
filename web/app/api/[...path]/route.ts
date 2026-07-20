@@ -2,7 +2,10 @@ import { proxyRequest } from "@/lib/server-proxy";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
-async function handle(request: Request, context: RouteContext): Promise<Response> {
+async function handle(
+  request: Request,
+  context: RouteContext,
+): Promise<Response> {
   const { path } = await context.params;
   return proxyRequest(request, path);
 }

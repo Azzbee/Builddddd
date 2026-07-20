@@ -21,7 +21,10 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: "no-store", headers: headers() });
+  const res = await fetch(`${BASE}${path}`, {
+    cache: "no-store",
+    headers: headers(),
+  });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -41,7 +44,8 @@ export const api = {
   getPaper: (id: string) => get<PaperCard>(`/papers/${encodeURIComponent(id)}`),
   summarizePapers: (paper_ids: string[]) =>
     post<SelectionSummary>("/papers/summarize", { paper_ids }),
-  pdfMeta: (id: string) => get<PdfMeta>(`/papers/${encodeURIComponent(id)}/pdf/meta`),
+  pdfMeta: (id: string) =>
+    get<PdfMeta>(`/papers/${encodeURIComponent(id)}/pdf/meta`),
   // Fetch the PDF through the workspace-aware proxy and return an object URL the
   // embedded viewer can use (an <iframe src> can't carry the X-Workspace-Id header).
   async pdfObjectUrl(id: string): Promise<string> {
@@ -60,18 +64,38 @@ export const api = {
     get<GraphDelta>(
       `/graph/delta?since_year=${sinceYear}${untilYear != null ? `&until_year=${untilYear}` : ""}`,
     ),
-  graphStats: () => get<{ papers: number; edges: number; communities: number }>("/graph/stats"),
+  graphStats: () =>
+    get<{ papers: number; edges: number; communities: number }>("/graph/stats"),
   query: (question: string) => post<AgentAnswer>("/query", { question }),
   matrix: (row: string, col: string) =>
-    get<{ row_facet: string; col_facet: string; cells: MatrixCell[]; top_gaps: MatrixCell[] }>(
-      `/landscape/matrix?row=${row}&col=${col}`,
-    ),
-  momentum: () => get<{ movers: Record<string, unknown>[] }>("/landscape/momentum"),
-  opportunities: (rowFacet = "method", colFacet = "dataset", limit = 6, useGlobal = true) =>
-    get<{ row_facet: string; col_facet: string; proposals: ResearchProposal[] }>(
+    get<{
+      row_facet: string;
+      col_facet: string;
+      cells: MatrixCell[];
+      top_gaps: MatrixCell[];
+    }>(`/landscape/matrix?row=${row}&col=${col}`),
+  momentum: () =>
+    get<{ movers: Record<string, unknown>[] }>("/landscape/momentum"),
+  opportunities: (
+    rowFacet = "method",
+    colFacet = "dataset",
+    limit = 6,
+    useGlobal = true,
+  ) =>
+    get<{
+      row_facet: string;
+      col_facet: string;
+      proposals: ResearchProposal[];
+    }>(
       `/landscape/opportunities?row_facet=${rowFacet}&col_facet=${colFacet}&limit=${limit}&use_global=${useGlobal}`,
     ),
-  proposal: (row: string, col: string, rowFacet = "method", colFacet = "dataset", useGlobal = true) =>
+  proposal: (
+    row: string,
+    col: string,
+    rowFacet = "method",
+    colFacet = "dataset",
+    useGlobal = true,
+  ) =>
     get<ResearchProposal>(
       `/landscape/proposal?row=${encodeURIComponent(row)}&col=${encodeURIComponent(col)}` +
         `&row_facet=${rowFacet}&col_facet=${colFacet}&use_global=${useGlobal}`,
@@ -96,19 +120,34 @@ export const api = {
       edges: { source: string; target: string; kind: string }[];
       timeline: Record<string, string[]>;
     }>(`/lineage?method=${encodeURIComponent(method)}`),
-  readingQueue: () => get<{ read_count: number; queue: Record<string, unknown>[] }>("/reading-queue"),
+  readingQueue: () =>
+    get<{ read_count: number; queue: Record<string, unknown>[] }>(
+      "/reading-queue",
+    ),
   relatedWork: () =>
-    get<{ clusters: Record<string, unknown>[]; markdown: string; bibtex: string }>("/related-work"),
+    get<{
+      clusters: Record<string, unknown>[];
+      markdown: string;
+      bibtex: string;
+    }>("/related-work"),
   generateDigest: () => post<{ markdown: string }>("/digest/generate", {}),
   watchQueue: () => get<Record<string, unknown>[]>("/watch/queue"),
   approveWatch: (arxiv_id: string, approve: boolean) =>
-    post<{ arxiv_id: string; status: string }>("/watch/approve", { arxiv_id, approve }),
+    post<{ arxiv_id: string; status: string }>("/watch/approve", {
+      arxiv_id,
+      approve,
+    }),
   jobs: () => get<IngestJob[]>("/ingest/jobs"),
-  ingestArxiv: (arxiv_id: string) => post<IngestJob>("/ingest/arxiv", { arxiv_id }),
+  ingestArxiv: (arxiv_id: string) =>
+    post<IngestJob>("/ingest/arxiv", { arxiv_id }),
   async ingestFile(file: File): Promise<IngestJob> {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${BASE}/ingest/file`, { method: "POST", body: form, headers: headers() });
+    const res = await fetch(`${BASE}/ingest/file`, {
+      method: "POST",
+      body: form,
+      headers: headers(),
+    });
     if (!res.ok) throw new Error(`ingest -> ${res.status}`);
     return res.json() as Promise<IngestJob>;
   },

@@ -12,7 +12,8 @@ const HOP_BY_HOP = [
 type ProxyEnv = Readonly<Record<string, string | undefined>>;
 
 function backendUrl(request: Request, path: string[], env: ProxyEnv): URL {
-  const base = env.LATTICE_API_BASE || env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+  const base =
+    env.LATTICE_API_BASE || env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
   const normalized = base.endsWith("/") ? base : `${base}/`;
   const target = new URL(path.map(encodeURIComponent).join("/"), normalized);
   target.search = new URL(request.url).search;
@@ -54,7 +55,10 @@ export async function proxyRequest(
     });
   } catch (error: unknown) {
     return Response.json(
-      { detail: "backend unavailable", error: error instanceof Error ? error.message : String(error) },
+      {
+        detail: "backend unavailable",
+        error: error instanceof Error ? error.message : String(error),
+      },
       { status: 502 },
     );
   }

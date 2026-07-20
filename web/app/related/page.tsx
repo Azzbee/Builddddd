@@ -45,11 +45,15 @@ export default function RelatedWorkPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="card">
           <h2 className="mb-2 text-sm font-semibold text-white">Draft</h2>
-          <pre className="whitespace-pre-wrap font-sans text-sm text-ink">{markdown || "Ingest papers first."}</pre>
+          <pre className="whitespace-pre-wrap font-sans text-sm text-ink">
+            {markdown || "Ingest papers first."}
+          </pre>
         </section>
         <section className="card">
           <h2 className="mb-2 text-sm font-semibold text-white">BibTeX</h2>
-          <pre className="overflow-auto font-mono text-xs text-muted">{bibtex || "(empty)"}</pre>
+          <pre className="overflow-auto font-mono text-xs text-muted">
+            {bibtex || "(empty)"}
+          </pre>
         </section>
       </div>
     </div>

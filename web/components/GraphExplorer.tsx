@@ -7,8 +7,16 @@ import Sigma from "sigma";
 import type { GraphData, GraphEdge, GraphNode } from "@/lib/types";
 
 const PALETTE = [
-  "#5b8cff", "#9b6bff", "#3fb950", "#d29922", "#f85149",
-  "#2dd4bf", "#f472b6", "#a3e635", "#fb923c", "#60a5fa",
+  "#5b8cff",
+  "#9b6bff",
+  "#3fb950",
+  "#d29922",
+  "#f85149",
+  "#2dd4bf",
+  "#f472b6",
+  "#a3e635",
+  "#fb923c",
+  "#60a5fa",
 ];
 
 function colorFor(community: number): string {
@@ -62,7 +70,11 @@ export function GraphExplorer({
       });
     });
     data.edges.forEach((e) => {
-      if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) {
+      if (
+        graph.hasNode(e.source) &&
+        graph.hasNode(e.target) &&
+        !graph.hasEdge(e.source, e.target)
+      ) {
         graph.addEdge(e.source, e.target, {
           size: 0.5 + e.weight * 4,
           color: "#2a3142",
@@ -72,7 +84,10 @@ export function GraphExplorer({
       }
     });
 
-    forceAtlas2.assign(graph, { iterations: 200, settings: { gravity: 1, scalingRatio: 12 } });
+    forceAtlas2.assign(graph, {
+      iterations: 200,
+      settings: { gravity: 1, scalingRatio: 12 },
+    });
 
     const renderer = new Sigma(graph, containerRef.current, {
       labelColor: { color: "#8b93a7" },
@@ -81,9 +96,13 @@ export function GraphExplorer({
       renderEdgeLabels: false,
     });
 
-    renderer.on("clickNode", ({ node }) => onSelect(graph.getNodeAttribute(node, "node")));
+    renderer.on("clickNode", ({ node }) =>
+      onSelect(graph.getNodeAttribute(node, "node")),
+    );
     renderer.on("clickStage", () => onSelect(null));
-    renderer.on("enterEdge", ({ edge }) => setHoverEdge(graph.getEdgeAttribute(edge, "edge")));
+    renderer.on("enterEdge", ({ edge }) =>
+      setHoverEdge(graph.getEdgeAttribute(edge, "edge")),
+    );
     renderer.on("leaveEdge", () => setHoverEdge(null));
 
     rendererRef.current = renderer;
@@ -107,7 +126,9 @@ export function GraphExplorer({
           : { ...attrs, color: "#2a3142", label: "", zIndex: 0 };
       }
       if (!term) return attrs;
-      const match = String(attrs.label || "").toLowerCase().includes(term);
+      const match = String(attrs.label || "")
+        .toLowerCase()
+        .includes(term);
       return match
         ? { ...attrs, zIndex: 1, highlighted: true }
         : { ...attrs, color: "#2a3142", label: "", zIndex: 0 };
@@ -155,7 +176,8 @@ export function GraphExplorer({
           x: graph.getNodeAttribute(node, "x") as number,
           y: graph.getNodeAttribute(node, "y") as number,
         });
-        if (p.x >= xMin && p.x <= xMax && p.y >= yMin && p.y <= yMax) ids.push(node);
+        if (p.x >= xMin && p.x <= xMax && p.y >= yMin && p.y <= yMax)
+          ids.push(node);
       });
     }
     dragRef.current = null;
@@ -195,7 +217,9 @@ export function GraphExplorer({
       {hoverEdge && (
         <div className="absolute bottom-3 left-3 card max-w-xs text-xs">
           <div className="mb-1 font-semibold text-white">Edge anatomy</div>
-          <div className="mb-1 text-muted">weight {hoverEdge.weight.toFixed(3)}</div>
+          <div className="mb-1 text-muted">
+            weight {hoverEdge.weight.toFixed(3)}
+          </div>
           <div className="flex flex-wrap gap-1">
             {Object.entries(hoverEdge.components).map(([k, v]) => (
               <span key={k} className="chip">

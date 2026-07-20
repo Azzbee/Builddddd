@@ -30,7 +30,9 @@ export default function LineagePage() {
       <header className="flex items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-white">Lineage</h1>
-          <p className="text-sm text-muted">How a method family evolved over time.</p>
+          <p className="text-sm text-muted">
+            How a method family evolved over time.
+          </p>
         </div>
         <div className="flex gap-2">
           <input
@@ -59,7 +61,9 @@ export default function LineagePage() {
                 .map(([year, ids]) => (
                   <div key={year} className="relative">
                     <span className="absolute -left-[31px] top-1 h-3 w-3 rounded-full bg-accent" />
-                    <div className="text-xs font-semibold text-accent">{year}</div>
+                    <div className="text-xs font-semibold text-accent">
+                      {year}
+                    </div>
                     <ul className="mt-1 space-y-1">
                       {ids.map((id) => (
                         <li key={id} className="text-sm text-ink">

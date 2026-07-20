@@ -153,7 +153,11 @@ export interface MatrixCell {
   state: string;
   global_count: number;
   gap_score: number;
-  components: { feasibility: number; adjacency_pressure: number; demand_signal: number };
+  components: {
+    feasibility: number;
+    adjacency_pressure: number;
+    demand_signal: number;
+  };
 }
 
 export interface ProposalEvidence {
