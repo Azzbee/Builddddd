@@ -89,6 +89,9 @@ class DoclingSettings(BaseSettings):
     table_min_confidence: float = 0.5
     # Token-overlap agreement above which GROBID/Docling regions are auto-accepted.
     reconcile_threshold: float = 0.9
+    vision_enabled: bool = True
+    vision_model: str = "claude-sonnet-4-6"
+    vision_timeout_s: float = 120.0
 
 
 class Neo4jSettings(BaseSettings):

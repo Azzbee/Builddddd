@@ -38,6 +38,12 @@ class ReconcileDecision:
     text: str
 
 
+@dataclass
+class DoclingOutput:
+    markdown: str
+    tables: list[TableArtifact]
+
+
 def reconcile(grobid_text: str, docling_text: str, threshold: float) -> ReconcileDecision:
     """Decide which text to trust for a region.
 
@@ -100,6 +106,34 @@ class DoclingClient:
                 )
             )
         return tables
+
+    def extract(self, pdf_path: str) -> DoclingOutput:  # pragma: no cover
+        """Convert once and return both Markdown body text and structured tables."""
+        if not self.available():
+            log.warning("docling.unavailable", path=pdf_path)
+            return DoclingOutput(markdown="", tables=[])
+        from docling.document_converter import DocumentConverter
+
+        result = DocumentConverter().convert(pdf_path)
+        document = result.document
+        tables: list[TableArtifact] = []
+        for i, table in enumerate(getattr(document, "tables", [])):
+            try:
+                frame = table.export_to_dataframe()
+                headers = [str(column) for column in frame.columns]
+                rows = [[str(value) for value in row] for row in frame.to_numpy().tolist()]
+            except Exception:
+                headers, rows = [], []
+            tables.append(
+                TableArtifact(
+                    table_id=f"table-{i + 1}",
+                    caption=getattr(table, "caption", None),
+                    headers=headers,
+                    rows=rows,
+                    parse_confidence=0.9,
+                )
+            )
+        return DoclingOutput(markdown=str(document.export_to_markdown()), tables=tables)
 
     def to_markdown(self, pdf_path: str) -> str:  # pragma: no cover
         if not self.available():

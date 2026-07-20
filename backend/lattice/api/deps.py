@@ -38,6 +38,7 @@ from lattice.ingestion.dispatch import (
     InlineIngestionDispatcher,
 )
 from lattice.ingestion.grobid_client import GrobidClient
+from lattice.ingestion.hybrid_parser import HybridParser
 from lattice.ingestion.service import IngestionService, Parser
 from lattice.rag.agent import RagAgent
 from lattice.rag.tools import Toolbox
@@ -159,9 +160,18 @@ def build_container(settings: Settings | None = None, workspace_id: str | None =
         text_extractor = lambda data: "Synthetic demo text. " * 60  # noqa: E731
     else:
         from lattice.enrichment.service import CompositeEnricher
+        from lattice.ingestion.vision_fallback import LiteLLMVisionModel
 
         llm = LiteLLMClient()
-        parser = GrobidClient(settings.grobid)
+        vision = (
+            LiteLLMVisionModel(
+                settings.docling.vision_model,
+                timeout=settings.docling.vision_timeout_s,
+            )
+            if settings.docling.vision_enabled
+            else None
+        )
+        parser = HybridParser(GrobidClient(settings.grobid), settings.docling, vision=vision)
         # Free SPECTER2 vectors + reference graph from S2/OpenAlex (best-effort).
         enricher = CompositeEnricher(settings.enrichment)
     ingestion = IngestionService(
