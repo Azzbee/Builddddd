@@ -75,6 +75,7 @@ dev = [
     # Needed by the blob/page-count and PDF-classification tests; without it here
     # they silently skip in dev and CI (module-level importorskip).
     "pypdf>=4.2",
+    "httpx2>=2.7.0",
 ]
 
 [build-system]
