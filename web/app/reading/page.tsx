@@ -3,24 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-
-interface QueueItem {
-  paper_id: string;
-  title: string;
-  gain: number;
-  neighborhood_value: number;
-  method_novelty: number;
-  novel_methods: string[];
-}
+import type { ReadingQueueItem } from "@/lib/types";
 
 export default function ReadingPage() {
-  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queue, setQueue] = useState<ReadingQueueItem[]>([]);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     api
       .readingQueue()
-      .then((r) => setQueue(r.queue as unknown as QueueItem[]))
+      .then((r) => setQueue(r.queue))
       .catch((e) => setError(String(e)));
   }, []);
 

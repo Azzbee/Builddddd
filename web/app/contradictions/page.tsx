@@ -3,20 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-
-interface Edge {
-  source_paper: string;
-  target_paper: string;
-  relation: string;
-  confidence: number;
-  source_text: string;
-  target_text: string;
-  source_evidence: string;
-  target_evidence: string;
-}
+import type { ClaimRelationEdge } from "@/lib/types";
 
 export default function ContradictionsPage() {
-  const [edges, setEdges] = useState<Edge[]>([]);
+  const [edges, setEdges] = useState<ClaimRelationEdge[]>([]);
   const [summary, setSummary] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -29,9 +19,7 @@ export default function ContradictionsPage() {
       setSummary(
         `${s.analyzed} relations, ${s.contradictions} contradictions, ${s.supports} supports`,
       );
-      const list = (await api.contradictions(
-        "CONTRADICTS",
-      )) as unknown as Edge[];
+      const list = await api.contradictions("CONTRADICTS");
       setEdges(list);
     } catch (e) {
       setError(String(e));

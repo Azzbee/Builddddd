@@ -211,3 +211,45 @@ export interface IngestJob {
   attempts: number;
   progress?: number;
 }
+
+export interface WatchCandidate {
+  arxiv_id: string;
+  title: string;
+  similarity: number;
+  nearest_paper_id: string | null;
+  pdf_url: string | null;
+}
+
+export interface ReadingQueueItem {
+  paper_id: string;
+  title: string;
+  gain: number;
+  neighborhood_value: number;
+  method_novelty: number;
+  novel_methods: string[];
+}
+
+export interface MomentumMover {
+  concept: string;
+  velocity: number;
+  acceleration: number;
+  burst: number;
+  author_influx: number;
+  community_convergence: number;
+  maturity: string;
+  composite: number;
+  counts: Record<number, number>;
+}
+
+export interface ClaimRelationEdge {
+  source_id: string;
+  target_id: string;
+  source_paper: string;
+  target_paper: string;
+  relation: string;
+  confidence: number;
+  source_text: string;
+  target_text: string;
+  source_evidence: string;
+  target_evidence: string;
+}

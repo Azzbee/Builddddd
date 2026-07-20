@@ -2,23 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-
-interface Candidate {
-  arxiv_id: string;
-  title: string;
-  similarity: number;
-  nearest_paper_id: string | null;
-  pdf_url: string | null;
-}
+import type { WatchCandidate } from "@/lib/types";
 
 export default function WatchPage() {
-  const [queue, setQueue] = useState<Candidate[]>([]);
+  const [queue, setQueue] = useState<WatchCandidate[]>([]);
   const [error, setError] = useState<string>();
 
   const refresh = useCallback(() => {
     api
       .watchQueue()
-      .then((q) => setQueue(q as unknown as Candidate[]))
+      .then(setQueue)
       .catch((e) => setError(String(e)));
   }, []);
 

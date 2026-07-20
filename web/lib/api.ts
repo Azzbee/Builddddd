@@ -1,15 +1,19 @@
 import type {
   AgentAnswer,
+  ClaimRelationEdge,
   GraphData,
   GraphDelta,
   GraphTimeline,
   IngestJob,
   MatrixCell,
+  MomentumMover,
   PaperCard,
   PaperSummary,
   PdfMeta,
   ResearchProposal,
+  ReadingQueueItem,
   SelectionSummary,
+  WatchCandidate,
 } from "./types";
 import { getWorkspace } from "./workspace";
 
@@ -115,8 +119,7 @@ export const api = {
       cells: MatrixCell[];
       top_gaps: MatrixCell[];
     }>(`/landscape/matrix?row=${row}&col=${col}`),
-  momentum: () =>
-    get<{ movers: Record<string, unknown>[] }>("/landscape/momentum"),
+  momentum: () => get<{ movers: MomentumMover[] }>("/landscape/momentum"),
   opportunities: (
     rowFacet = "method",
     colFacet = "dataset",
@@ -153,7 +156,7 @@ export const api = {
       {},
     ),
   contradictions: (relation = "CONTRADICTS") =>
-    get<Record<string, unknown>[]>(`/contradictions?relation=${relation}`),
+    get<ClaimRelationEdge[]>(`/contradictions?relation=${relation}`),
   lineage: (method: string) =>
     get<{
       method: string;
@@ -162,9 +165,7 @@ export const api = {
       timeline: Record<string, string[]>;
     }>(`/lineage?method=${encodeURIComponent(method)}`),
   readingQueue: () =>
-    get<{ read_count: number; queue: Record<string, unknown>[] }>(
-      "/reading-queue",
-    ),
+    get<{ read_count: number; queue: ReadingQueueItem[] }>("/reading-queue"),
   relatedWork: () =>
     get<{
       clusters: Record<string, unknown>[];
@@ -172,7 +173,7 @@ export const api = {
       bibtex: string;
     }>("/related-work"),
   generateDigest: () => post<{ markdown: string }>("/digest/generate", {}),
-  watchQueue: () => get<Record<string, unknown>[]>("/watch/queue"),
+  watchQueue: () => get<WatchCandidate[]>("/watch/queue"),
   approveWatch: (arxiv_id: string, approve: boolean) =>
     post<{ arxiv_id: string; status: string }>("/watch/approve", {
       arxiv_id,

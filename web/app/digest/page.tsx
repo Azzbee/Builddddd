@@ -2,24 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-
-interface Mover {
-  concept: string;
-  composite: number;
-  maturity: string;
-  velocity: number;
-  acceleration: number;
-}
+import type { MomentumMover } from "@/lib/types";
 
 export default function DigestPage() {
-  const [movers, setMovers] = useState<Mover[]>([]);
+  const [movers, setMovers] = useState<MomentumMover[]>([]);
   const [digest, setDigest] = useState<string>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     api
       .momentum()
-      .then((m) => setMovers((m.movers as unknown as Mover[]) ?? []))
+      .then((m) => setMovers(m.movers))
       .catch((e) => setError(String(e)));
   }, []);
 
