@@ -176,7 +176,7 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 415 tests pass offline; four live integration modules skip without
+- Backend: 416 tests pass offline; four live integration modules skip without
   service DSNs; `mypy --strict`, Ruff lint, and Ruff format checks are clean.
 - Preprint -> published **supersession** is wired end-to-end (SUPERSEDED_BY edge,
   bi-temporal edge invalidation, out of analytics and the candidate pool), and

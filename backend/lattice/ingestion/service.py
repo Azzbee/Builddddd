@@ -506,7 +506,7 @@ class IngestionService:
             citations=citations,
         )
 
-        # Persist: paper node, entities, claims, then edges + audit (last, atomic).
+        # Persist in an idempotent order. A retry converges if a later store fails.
         await self._writer.upsert_paper(card)
         for author in card.authors:
             await self._writer.upsert_author(author.name, pid, s2_id=author.s2_id)
