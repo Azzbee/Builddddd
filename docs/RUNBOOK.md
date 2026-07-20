@@ -81,6 +81,8 @@ make down
 ```
 
 Endpoints: API `:8000`, Web `:3000`, Neo4j browser `:7474`, GROBID `:8070`.
+Compose reads `.env` by default. Set `LATTICE_ENV_FILE` to use another file,
+for example `LATTICE_ENV_FILE=.env.staging docker compose up -d`.
 
 Persistent ingestion is asynchronous. The API stores the job and PDF before it
 returns 202, then an arq worker resumes the staged job. The web app polls the job
