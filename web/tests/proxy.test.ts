@@ -83,7 +83,6 @@ describe("API proxy", () => {
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({
       detail: "backend unavailable",
-      error: "connection refused",
     });
   });
 });

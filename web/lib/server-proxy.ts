@@ -53,13 +53,7 @@ export async function proxyRequest(
       statusText: upstream.statusText,
       headers,
     });
-  } catch (error: unknown) {
-    return Response.json(
-      {
-        detail: "backend unavailable",
-        error: error instanceof Error ? error.message : String(error),
-      },
-      { status: 502 },
-    );
+  } catch {
+    return Response.json({ detail: "backend unavailable" }, { status: 502 });
   }
 }
