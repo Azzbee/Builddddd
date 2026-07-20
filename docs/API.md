@@ -1,7 +1,8 @@
 # API reference
 
-FastAPI app (`lattice.api.app:app`). Interactive docs are at `/docs`. Production
-startup requires `LATTICE_AUTH_TOKEN`; send it as `Authorization: Bearer <token>`.
+FastAPI app (`lattice.api.app:app`). Interactive docs are at `/docs` in development
+and are disabled in production. Production startup requires `LATTICE_AUTH_TOKEN`;
+send it as `Authorization: Bearer <token>`.
 The Next.js app sends browser requests through its same-origin `/api` route and
 adds the token on the server, so the secret is never exposed to browser code.
 
@@ -14,7 +15,7 @@ caps the number of cached workspace containers with `LATTICE_MAX_WORKSPACES`.
 | --- | --- | --- |
 | GET | `/health`, `/healthz` | Liveness + version |
 | GET | `/readyz` | Readiness; probes PostgreSQL, Neo4j, and Redis in persistent mode, returns 503 on failure |
-| GET | `/metrics` | Prometheus exposition (requests, latency histogram) |
+| GET | `/metrics` | Authenticated Prometheus exposition (requests, latency histogram) |
 | GET | `/workspaces` | Authenticated list of corpora touched by this process |
 
 ## Ingestion

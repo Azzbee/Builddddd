@@ -7,7 +7,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from lattice import __version__
@@ -25,6 +25,7 @@ from lattice.api import (
     reading,
     watch,
 )
+from lattice.api.deps import require_auth
 from lattice.config import get_settings
 from lattice.core.logging import configure_logging
 from lattice.core.metrics import REGISTRY
@@ -52,6 +53,9 @@ def create_app() -> FastAPI:
         version=__version__,
         description="A living knowledge graph for scientific literature.",
         lifespan=lifespan,
+        docs_url=None if settings.environment == "prod" else "/docs",
+        redoc_url=None if settings.environment == "prod" else "/redoc",
+        openapi_url=None if settings.environment == "prod" else "/openapi.json",
     )
     app.add_middleware(
         CORSMiddleware,
@@ -106,7 +110,11 @@ def create_app() -> FastAPI:
         )
         return response
 
-    @app.get("/metrics", include_in_schema=False)
+    @app.get(
+        "/metrics",
+        include_in_schema=False,
+        dependencies=[Depends(require_auth)],
+    )
     async def metrics() -> Response:
         return Response(content=REGISTRY.render(), media_type="text/plain; version=0.0.4")
 

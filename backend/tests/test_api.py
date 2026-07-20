@@ -619,12 +619,29 @@ def test_auth_enforced_when_token_set(monkeypatch: pytest.MonkeyPatch) -> None:
         app = create_app()
         c = TestClient(app)
         assert c.get("/papers").status_code == 401
+        assert c.get("/metrics").status_code == 401
         assert c.get("/workspaces").status_code == 401
         assert c.get("/papers", headers={"Authorization": "Bearer secret"}).status_code in (
             200,
             500,
         )
         assert c.get("/workspaces", headers={"Authorization": "Bearer secret"}).status_code == 200
+        assert c.get("/metrics", headers={"Authorization": "Bearer secret"}).status_code == 200
     finally:
         monkeypatch.delenv("LATTICE_AUTH_TOKEN", raising=False)
+        get_settings.cache_clear()
+
+
+def test_production_disables_interactive_api_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lattice.config import get_settings
+
+    monkeypatch.setenv("LATTICE_ENVIRONMENT", "prod")
+    monkeypatch.setenv("LATTICE_AUTH_TOKEN", "secret")
+    get_settings.cache_clear()
+    try:
+        c = TestClient(create_app())
+        assert c.get("/docs").status_code == 404
+        assert c.get("/redoc").status_code == 404
+        assert c.get("/openapi.json").status_code == 404
+    finally:
         get_settings.cache_clear()

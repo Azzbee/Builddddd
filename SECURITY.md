@@ -8,8 +8,10 @@ for vulnerabilities. You will get an acknowledgement within a few days.
 ## Security posture
 
 - **Auth**: single-user bearer token (`LATTICE_AUTH_TOKEN`). Production startup
-  fails if it is missing. All application routes except health and metrics
-  require the configured token. The workspace listing is authenticated too.
+  fails if it is missing. All routes except liveness and readiness require the
+  configured token. The workspace listing and metrics endpoint are authenticated.
+- **API schema**: Swagger, ReDoc, and the OpenAPI document are disabled in
+  production. They remain available in development.
 - **Browser secret handling**: browser requests use the same-origin Next.js
   `/api` route. The server removes browser-provided authorization and injects the
   bearer token from its private environment. The token is never sent in a
