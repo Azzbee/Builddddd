@@ -15,9 +15,52 @@ import { getWorkspace } from "./workspace";
 
 // All requests go through the Next.js /api proxy (see next.config.mjs).
 const BASE = "/api";
+const MAX_ERROR_DETAIL_LENGTH = 300;
+
+export class ApiError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    detail: string,
+  ) {
+    super(`${detail} (${status})`);
+    this.name = "ApiError";
+  }
+}
 
 function headers(extra: Record<string, string> = {}): Record<string, string> {
   return { "X-Workspace-Id": getWorkspace(), ...extra };
+}
+
+function boundedDetail(value: string): string {
+  return value.trim().slice(0, MAX_ERROR_DETAIL_LENGTH);
+}
+
+async function apiError(response: Response, path: string): Promise<ApiError> {
+  let detail = "request failed";
+  try {
+    const body: unknown = await response.clone().json();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "detail" in body &&
+      typeof body.detail === "string"
+    ) {
+      detail = boundedDetail(body.detail) || detail;
+    }
+  } catch {
+    try {
+      detail = boundedDetail(await response.text()) || detail;
+    } catch {
+      // Keep the stable fallback when the response body cannot be decoded.
+    }
+  }
+  return new ApiError(path, response.status, detail);
+}
+
+async function json<T>(response: Response, path: string): Promise<T> {
+  if (!response.ok) throw await apiError(response, path);
+  return response.json() as Promise<T>;
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -25,8 +68,7 @@ async function get<T>(path: string): Promise<T> {
     cache: "no-store",
     headers: headers(),
   });
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
-  return res.json() as Promise<T>;
+  return json<T>(res, path);
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -35,8 +77,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: headers({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
-  return res.json() as Promise<T>;
+  return json<T>(res, path);
 }
 
 export const api = {
@@ -53,7 +94,7 @@ export const api = {
       cache: "no-store",
       headers: headers(),
     });
-    if (!res.ok) throw new Error(`pdf -> ${res.status}`);
+    if (!res.ok) throw await apiError(res, `/papers/${id}/pdf`);
     return URL.createObjectURL(await res.blob());
   },
   graph: (minWeight = 0) => get<GraphData>(`/graph?min_weight=${minWeight}`),
@@ -150,8 +191,7 @@ export const api = {
       body: form,
       headers: headers(),
     });
-    if (!res.ok) throw new Error(`ingest -> ${res.status}`);
-    return res.json() as Promise<IngestJob>;
+    return json<IngestJob>(res, "/ingest/file");
   },
 };
 
@@ -177,7 +217,7 @@ export function streamQuery(
       body: JSON.stringify({ question }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`query/stream -> ${res.status}`);
+    if (!res.ok) throw await apiError(res, "/query/stream");
     if (!res.body) throw new Error("query/stream -> empty body");
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -34,5 +34,45 @@ describe("ingestion API client", () => {
         body: "{}",
       },
     );
+  });
+
+  it("preserves a backend JSON error for the UI", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { detail: "job reached the configured attempt cap" },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const error = await api
+      .retryJob("job-1")
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      path: "/ingest/jobs/job-1/retry",
+      status: 409,
+      message: "job reached the configured attempt cap (409)",
+    });
+  });
+
+  it("uses a bounded text error when a proxy does not return JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(`gateway failure ${"x".repeat(500)}`, { status: 502 }),
+      ),
+    );
+
+    const error = await api.listPapers().catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(502);
+    expect((error as ApiError).message.length).toBeLessThanOrEqual(306);
+    expect((error as ApiError).message).toMatch(/^gateway failure/);
   });
 });
