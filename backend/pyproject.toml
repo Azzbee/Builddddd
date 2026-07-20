@@ -55,10 +55,6 @@ embeddings = [
     "sentence-transformers>=3.0",
     "torch>=2.3",
 ]
-observability = [
-    "prometheus-client>=0.20",
-    "langfuse>=2.40",
-]
 mcp = [
     "mcp>=1.2",
 ]

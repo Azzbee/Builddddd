@@ -194,5 +194,7 @@ restore drill succeeds.
 
 ## Observability
 - Structured JSON logs (structlog) to stdout; ship to your log stack.
-- Prometheus metrics and Langfuse LLM tracing are wired via optional extras
-  (`observability`); enable by setting the corresponding env vars.
+- The dependency-free Prometheus endpoint is available at authenticated
+  `GET /metrics`; configure the scraper with `LATTICE_AUTH_TOKEN`.
+- The worker generates a digest every Monday at 08:00 and stores it for the UI.
+  Lattice does not send email; export or deliver the stored Markdown separately.

@@ -9,7 +9,7 @@ field: paper-level cards, weighted relationships, and an agent that can answer
 *"which methods have been tried for X, what data did they use, and where do they
 disagree?"*
 
-Lattice ingests scientific papers (PDF, arXiv id, or DOI), extracts their
+Lattice ingests scientific papers from a PDF or arXiv id, extracts their
 intellectual skeleton (problem, methodology, datasets, results, limitations,
 contributions) into structured **PaperCards**, and assembles them into a
 weighted, **bi-temporal** knowledge graph that updates incrementally as new
@@ -26,7 +26,7 @@ resumable, and idempotent.
 | Concern | Decision | Rationale |
 | --- | --- | --- |
 | PDF structure | **GROBID** | Production standard for scholarly metadata + references |
-| Tables / formulas / figures | **Docling** region router + vision fallback | GROBID is weak on tables/formulas; route per region type |
+| Tables and complex layout | **Docling** reconciliation + vision fallback | GROBID is weak on layout; compare section text and arbitrate disagreements |
 | Paper similarity | **SPECTER2** (S2 precomputed first) | Citation-informed, best quality-per-compute |
 | Aspect similarity | **PaperCard field embeddings** (bge-m3) | Sidesteps SPECTER2 domain bias; feeds the weight function |
 | Graph | **Custom typed schema in Neo4j** | Owning the ontology is the product |
@@ -81,7 +81,7 @@ lattice/
 │       ├── landscape/      # gap matrix, epistemic quadrants, momentum
 │       ├── digest/         # weekly delta report
 │       └── eval/           # extraction / retrieval / edge-quality harnesses + golden set
-├── web/                    # Next.js 15 (App Router), TypeScript, Tailwind, shadcn/ui
+├── web/                    # Next.js 15 (App Router), TypeScript, Tailwind
 └── docs/                   # ARCHITECTURE, SIMILARITY, RUNBOOK
 ```
 
@@ -130,7 +130,7 @@ uv run ruff check . && uv run mypy lattice
 
 All eight PRD "extras" are built, not just stubbed:
 
-1. **Contradiction & convergence detection** - claim-level NLI, run incrementally
+1. **Contradiction & convergence detection** - claim-level relation classification, run incrementally
    at ingest so disagreements surface as papers arrive, plus a full-corpus LLM
    pass on demand. Surfaces where the
    corpus disagrees, as first-class `CONTRADICTS`/`SUPPORTS`/`EXTENDS` edges.

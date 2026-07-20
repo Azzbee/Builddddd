@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Install dependencies first for layer caching.
 COPY pyproject.toml README.md ./
-RUN uv pip install --system ".[api,db,llm,parsing,embeddings,observability]"
+RUN uv pip install --system ".[api,db,llm,parsing,embeddings]"
 
 COPY lattice ./lattice
 

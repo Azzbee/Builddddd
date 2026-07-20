@@ -20,7 +20,7 @@ Next.js Web App  ──REST + SSE──>  FastAPI Backend
 
 ## Data flow (ingestion)
 
-A PDF (or arXiv id / DOI) moves through a resumable state machine
+A PDF (uploaded directly or fetched from an arXiv id) moves through a resumable state machine
 (`ingestion/pipeline.py`, wired by `ingestion/service.py`). `job.stage` is always
 the last *completed* stage, so a crash resumes exactly where it stopped. Linking
 is the final stage. Its cross-store writes are idempotent rather than one database
@@ -41,9 +41,11 @@ until `LATTICE_INGEST_MAX_ATTEMPTS` is reached.
    typed, actionable error states. GROBID extracts structure, metadata, and
    references (`grobid_client.parse_tei`, a pure function). Docling processes
    the PDF once, contributes Markdown sections and tables, and reconciles each
-   matching section by token overlap. The selected text receives a
-   `parse_confidence`; disputed sections can escalate to a vision LLM using a
-   rendered image of the source page. Dedup
+  matching section by token overlap. The selected text receives a
+  `parse_confidence`; disputed sections can escalate to a vision LLM using a
+  rendered image of the source page. DOI metadata extracted from the PDF is used
+  for identity, enrichment, and deduplication, but DOI URLs are not acquisition
+  endpoints. Dedup
    (content hash / DOI / arXiv / fuzzy title+author) makes re-ingestion a no-op.
 2. **EXTRACTING** - the LLM fills a `PaperCard` via structured output with a
    validate-and-repair loop. Confidence blends the model's self-report,
@@ -121,7 +123,7 @@ Three living-graph behaviors happen inside linking:
   weighted greedy modularity (`graph/community.py`), not connected components, so a
   connected graph still resolves into real sub-communities. The persistent path uses
   Neo4j GDS Louvain. Cross-community claim clustering is polarity-aware (a claim and
-  its negation never merge), and the heuristic NLI requires genuine subject overlap
+  its negation never merge), and the heuristic classifier requires genuine subject overlap
   (0.5) before a polarity clash counts as a contradiction - both prevent the
   false-positive contradictions that otherwise suppress known-knowns.
 - **Best-effort signals are time-boxed.** The OpenAlex global-gap signal runs under a
@@ -132,8 +134,8 @@ Three living-graph behaviors happen inside linking:
   PaperCard fields to sidestep SPECTER2's domain bias and feed `S_meth`; chunk
   embeddings for hybrid retrieval. A deterministic `HashingEmbedder` is the
   offline fallback so the system always runs.
-- **Custom typed graph in Neo4j.** Owning the ontology (Paper, Author, Method,
-  Dataset, Concept, Claim, OpenProblem, Formula) is the product. We borrow
+- **Custom typed graph in Neo4j.** The persisted ontology contains Paper, Author,
+  Method, Dataset, Concept, and Claim nodes. We borrow
   LightRAG's dual-level retrieval and Graphiti's bi-temporal edges as *patterns*,
   not dependencies.
 - **Provider-agnostic LLM access** via a thin `LLMClient` (LiteLLM in prod),
@@ -148,7 +150,7 @@ Three living-graph behaviors happen inside linking:
 | `extraction` | PaperCard schema, versioned prompts, validate-and-repair extractor |
 | `enrichment` | cached/back-off S2/OpenAlex/Crossref/arXiv clients |
 | `embeddings` | SPECTER2, chunk + aspect embedders, hashing fallback |
-| `graph` | schema/constraints, similarity (core IP), evolution, entity resolution, writer, analytics, store, contradictions (NLI), lineage |
+| `graph` | schema/constraints, similarity, evolution, entity resolution, writer, analytics, store, claim relations, lineage |
 | `rag` | router, typed tools, ReAct agent (SSE), cited synthesis, related-work generator |
 | `landscape` | gap matrix, epistemic quadrants, momentum, global/demand signals, reading queue |
 | `export` | Obsidian/Markdown notes (BibTeX lives in `rag.related_work`) |
