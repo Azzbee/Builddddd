@@ -43,9 +43,9 @@ for vulnerabilities. You will get an acknowledgement within a few days.
   overspend.
 - **Privacy**: uploaded PDFs are stored privately and never re-published; exports
   contain only structured notes and short quotes.
-- **Dependency checks**: CI runs `npm audit` at moderate severity and builds from
-  the lockfile with `npm ci`. The current web dependency tree has zero reported
-  vulnerabilities.
+- **Dependency checks**: CI runs `npm audit` at moderate severity and `pip-audit`
+  across every Python extra. Both ecosystems install from committed lockfiles;
+  the backend image also uses `uv sync --locked` with a pinned uv image.
 
 ## Hardening checklist for production
 

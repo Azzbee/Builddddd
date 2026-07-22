@@ -3,19 +3,23 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    UV_SYSTEM_PYTHON=1 \
-    UV_COMPILE_BYTECODE=1
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/app/.venv/bin:$PATH"
 
-# uv from the official distroless image.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# uv from the official distroless image, pinned for reproducible builds.
+COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /uvx /bin/
 
 WORKDIR /app
 
-# Install dependencies first for layer caching.
-COPY pyproject.toml README.md ./
-RUN uv pip install --system ".[api,db,llm,parsing,embeddings]"
+# Install locked dependencies first for layer caching.
+COPY pyproject.toml README.md uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project \
+    --extra api --extra db --extra llm --extra parsing --extra embeddings
 
 COPY lattice ./lattice
+RUN uv sync --locked --no-dev --no-editable \
+    --extra api --extra db --extra llm --extra parsing --extra embeddings
 
 EXPOSE 8000
 
