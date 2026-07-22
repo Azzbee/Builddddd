@@ -115,7 +115,8 @@ class IngestionPipeline:
                 job.error_message = str(exc)
                 job.retryable = False
                 if not job.paper_id:
-                    job.paper_id = ctx.extra.get("duplicate_of")  # type: ignore[assignment]
+                    duplicate_of = ctx.extra.get("duplicate_of")
+                    job.paper_id = duplicate_of if isinstance(duplicate_of, str) else None
                 await self._persist(job)
                 log.info("ingest.duplicate", job_id=job.job_id, of=job.paper_id)
                 break

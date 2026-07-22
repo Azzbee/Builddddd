@@ -66,10 +66,12 @@ class CompositeEnricher:
                 if work.concepts:
                     out["concepts"] = work.concepts
 
+        reference_ids = out.get("reference_ids")
+        reference_count = len(reference_ids) if isinstance(reference_ids, list) else 0
         log.info(
             "enrich.result",
             paper_id=card.paper_id,
             has_specter="specter_embedding" in out,
-            refs=len(out.get("reference_ids", []) or []),  # type: ignore[arg-type]
+            refs=reference_count,
         )
         return out

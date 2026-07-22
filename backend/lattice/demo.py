@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from lattice.core.llm import LLMMessage, LLMResponse
 from lattice.ingestion.models import ParsedDocument, ParsedReference, ParsedSection
+
+if TYPE_CHECKING:
+    from lattice.api.deps import Container
 
 
 @dataclass
@@ -289,10 +293,10 @@ def demo_pdf_bytes(filename: str) -> bytes:
     return b"%PDF-1.7\n" + filename.encode() + b" " + b"x" * 4000
 
 
-async def load_demo(container: object) -> int:
+async def load_demo(container: Container) -> int:
     """Ingest the demo corpus into a container and run contradiction analysis."""
-    ingestion = container.ingestion  # type: ignore[attr-defined]
-    jobs = container.jobs  # type: ignore[attr-defined]
+    ingestion = container.ingestion
+    jobs = container.jobs
     n = 0
     for p in DEMO_CORPUS:
         job = await ingestion.ingest_pdf(p.filename, demo_pdf_bytes(p.filename))

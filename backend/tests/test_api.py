@@ -290,12 +290,16 @@ def test_ingest_rejects_oversized_upload(monkeypatch: pytest.MonkeyPatch) -> Non
     from lattice.api import deps
     from lattice.config import get_settings
 
-    monkeypatch.setenv("LATTICE_MAX_UPLOAD_MB", "0")  # reject anything non-empty
+    monkeypatch.setenv("LATTICE_MAX_UPLOAD_MB", "1")
     get_settings.cache_clear()
     deps._registry.clear()  # drop any cached container so new settings take effect
     try:
         c = TestClient(create_app())
-        r = c.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+        oversized_pdf = b"%PDF-1.7\n" + b"x" * (1024 * 1024)
+        r = c.post(
+            "/ingest/file",
+            files={"file": ("a.pdf", oversized_pdf, "application/pdf")},
+        )
         assert r.status_code == 413
     finally:
         get_settings.cache_clear()

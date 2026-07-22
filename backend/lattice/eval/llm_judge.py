@@ -159,8 +159,10 @@ class LLMJudge:
 
 
 def _clamp(value: object) -> float:
+    if not isinstance(value, int | float | str):
+        return 0.0
     try:
-        return max(0.0, min(1.0, float(value)))  # type: ignore[arg-type]
+        return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError):
         return 0.0
 

@@ -428,10 +428,16 @@ class IngestionService:
         pid = card.paper_id
 
         precomputed = ctx.extra.get("specter_embedding")
+        precomputed_vector = (
+            [float(value) for value in precomputed]
+            if isinstance(precomputed, list)
+            and all(isinstance(value, int | float) for value in precomputed)
+            else None
+        )
         paper_emb = self.specter.embed(
             card.title,
             card.abstract,
-            precomputed=precomputed,  # type: ignore[arg-type]
+            precomputed=precomputed_vector,
         )
         aspects = self.aspect_embedder.embed_card(card)
 
@@ -506,17 +512,19 @@ class IngestionService:
 
         # Persist in an idempotent order. A retry converges if a later store fails.
         await self._writer.upsert_paper(card)
+        assert self.method_resolver is not None
+        assert self.dataset_resolver is not None
         for author in card.authors:
             await self._writer.upsert_author(author.name, pid, s2_id=author.s2_id)
         method_names = card.methods_taxonomy + card.methodology.techniques
         method_embs = self.chunk_embedder.embed_texts(method_names) if method_names else []
         for method, emb in zip(method_names, method_embs, strict=True):
-            res = self.method_resolver.resolve(method, embedding=emb)  # type: ignore[union-attr]
+            res = self.method_resolver.resolve(method, embedding=emb)
             await self._writer.upsert_method(res.key, res.name, pid)
         dataset_names = [ds.name for ds in card.datasets]
         dataset_embs = self.chunk_embedder.embed_texts(dataset_names) if dataset_names else []
         for ds_name, emb in zip(dataset_names, dataset_embs, strict=True):
-            res = self.dataset_resolver.resolve(ds_name, embedding=emb)  # type: ignore[union-attr]
+            res = self.dataset_resolver.resolve(ds_name, embedding=emb)
             await self._writer.upsert_dataset(res.key, ds_name, pid)
         for concept in card.domains:
             await self._writer.upsert_concept(
@@ -998,8 +1006,13 @@ class IngestionService:
                     row_facet, col_facet, cell.row, cell.col, global_count=cell.global_count
                 )
             )
+
         # Strongest opportunities first by the proposal's own confidence.
-        proposals.sort(key=lambda p: float(p["confidence"]), reverse=True)  # type: ignore[arg-type]
+        def confidence(proposal: dict[str, object]) -> float:
+            value = proposal.get("confidence")
+            return float(value) if isinstance(value, int | float | str) else 0.0
+
+        proposals.sort(key=confidence, reverse=True)
         return {"row_facet": row_facet, "col_facet": col_facet, "proposals": proposals}
 
     # ------------------------------------------------------------------ related work / export

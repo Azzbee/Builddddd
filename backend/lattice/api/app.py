@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hmac
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request, Response
@@ -30,6 +30,8 @@ from lattice.config import get_settings
 from lattice.core.logging import configure_logging
 from lattice.core.metrics import REGISTRY
 from lattice.core.ratelimit import SlidingWindowLimiter
+
+CallNext = Callable[[Request], Awaitable[Response]]
 
 
 def create_app() -> FastAPI:
@@ -68,7 +70,7 @@ def create_app() -> FastAPI:
     _EXEMPT = {"/health", "/healthz", "/readyz", "/metrics"}
 
     @app.middleware("http")
-    async def _rate_limit_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def _rate_limit_middleware(request: Request, call_next: CallNext) -> Response:
         if request.url.path in _EXEMPT:
             return await call_next(request)
         auth = request.headers.get("authorization")
@@ -93,7 +95,7 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     @app.middleware("http")
-    async def _metrics_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def _metrics_middleware(request: Request, call_next: CallNext) -> Response:
         start = time.perf_counter()
         response = await call_next(request)
         elapsed = time.perf_counter() - start
