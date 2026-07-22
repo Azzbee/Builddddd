@@ -229,6 +229,9 @@ export function streamQuery(
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
+      // SSE uses CRLF on the wire. Normalize after appending so a CRLF pair
+      // split across network chunks is still recognized as one line ending.
+      buffer = buffer.replace(/\r\n/g, "\n");
       const frames = buffer.split("\n\n");
       buffer = frames.pop() ?? "";
       for (const frame of frames) {
