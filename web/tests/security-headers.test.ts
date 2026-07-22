@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import nextConfig, { securityHeaders } from "../next.config";
 
 describe("web security headers", () => {
+  it("does not advertise the application framework", () => {
+    expect(nextConfig.poweredByHeader).toBe(false);
+  });
+
   it("applies the policy to every route", async () => {
     expect(nextConfig.headers).toBeTypeOf("function");
     const rules = await nextConfig.headers!();

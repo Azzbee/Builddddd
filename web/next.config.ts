@@ -32,6 +32,7 @@ export const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
   // `next build` and `next dev` share .next by default, so a build run while the
   // dev server is up corrupts its chunks ("Cannot find module './NNN.js'").
   // Verification builds use `npm run build:check` (a separate dist dir) instead.
