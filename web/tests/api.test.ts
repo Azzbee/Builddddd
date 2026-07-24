@@ -118,3 +118,30 @@ describe("streaming query client", () => {
     ]);
   });
 });
+
+describe("contradictions API client", () => {
+  it("fetches persisted relations filtered by relation type", async () => {
+    const edge = {
+      source_id: "claim-a",
+      target_id: "claim-b",
+      source_paper: "paper-a",
+      target_paper: "paper-b",
+      relation: "CONTRADICTS",
+      confidence: 0.87,
+      source_text: "Transformers improve forecasting accuracy",
+      target_text: "Transformers show no significant improvement",
+      source_evidence: "Table 3",
+      target_evidence: "Table 1",
+    };
+    const request = vi.fn(async () => Response.json([edge], { status: 200 }));
+    vi.stubGlobal("fetch", request);
+
+    // The contradictions page calls this on mount so already-persisted
+    // relations render without re-running the analysis pass.
+    await expect(api.contradictions("CONTRADICTS")).resolves.toEqual([edge]);
+    expect(request).toHaveBeenCalledWith(
+      "/api/contradictions?relation=CONTRADICTS",
+      { cache: "no-store", headers: { "X-Workspace-Id": "default" } },
+    );
+  });
+});

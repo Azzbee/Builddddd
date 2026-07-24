@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import type { ClaimRelationEdge } from "@/lib/types";
@@ -9,7 +9,18 @@ export default function ContradictionsPage() {
   const [edges, setEdges] = useState<ClaimRelationEdge[]>([]);
   const [summary, setSummary] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+
+  // Relations are persisted by earlier analyses, so show what the corpus
+  // already knows instead of making the reader re-run the whole pass.
+  useEffect(() => {
+    api
+      .contradictions("CONTRADICTS")
+      .then(setEdges)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, []);
 
   async function run() {
     setBusy(true);
@@ -46,7 +57,9 @@ export default function ContradictionsPage() {
       {error && <div className="card border-bad text-bad">{error}</div>}
       {summary && <div className="text-sm text-muted">{summary}</div>}
 
-      {edges.length === 0 ? (
+      {loading ? (
+        <p className="text-sm text-muted">Loading contradictions...</p>
+      ) : edges.length === 0 ? (
         <p className="text-sm text-muted">
           No contradictions found yet. Run the analysis after ingesting papers.
         </p>
