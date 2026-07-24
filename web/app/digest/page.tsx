@@ -2,24 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-
-interface Mover {
-  concept: string;
-  composite: number;
-  maturity: string;
-  velocity: number;
-  acceleration: number;
-}
+import type { MomentumMover } from "@/lib/types";
 
 export default function DigestPage() {
-  const [movers, setMovers] = useState<Mover[]>([]);
+  const [movers, setMovers] = useState<MomentumMover[]>([]);
   const [digest, setDigest] = useState<string>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     api
       .momentum()
-      .then((m) => setMovers((m.movers as unknown as Mover[]) ?? []))
+      .then((m) => setMovers(m.movers))
       .catch((e) => setError(String(e)));
   }, []);
 
@@ -37,8 +30,9 @@ export default function DigestPage() {
         <div>
           <h1 className="text-xl font-semibold text-white">Digest: movers</h1>
           <p className="text-sm text-muted">
-            Concept momentum from the corpus. Momentum measures research activity, not
-            truth: pair it with the contested and saturated states before believing a trend.
+            Concept momentum from the corpus. Momentum measures research
+            activity, not truth: pair it with the contested and saturated states
+            before believing a trend.
           </p>
         </div>
         <button className="btn-accent" onClick={generate}>
@@ -48,14 +42,22 @@ export default function DigestPage() {
 
       {digest && (
         <section className="card">
-          <pre className="whitespace-pre-wrap font-sans text-sm text-ink">{digest}</pre>
+          <pre className="whitespace-pre-wrap font-sans text-sm text-ink">
+            {digest}
+          </pre>
         </section>
       )}
 
-      {error && <div className="card border-bad text-bad">Backend unreachable: {error}</div>}
+      {error && (
+        <div className="card border-bad text-bad">
+          Backend unreachable: {error}
+        </div>
+      )}
 
       {movers.length === 0 ? (
-        <p className="text-sm text-muted">No movers yet. Ingest more papers across years.</p>
+        <p className="text-sm text-muted">
+          No movers yet. Ingest more papers across years.
+        </p>
       ) : (
         <div className="space-y-2">
           {movers.map((m) => (

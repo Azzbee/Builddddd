@@ -3,20 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-
-interface Edge {
-  source_paper: string;
-  target_paper: string;
-  relation: string;
-  confidence: number;
-  source_text: string;
-  target_text: string;
-  source_evidence: string;
-  target_evidence: string;
-}
+import type { ClaimRelationEdge } from "@/lib/types";
 
 export default function ContradictionsPage() {
-  const [edges, setEdges] = useState<Edge[]>([]);
+  const [edges, setEdges] = useState<ClaimRelationEdge[]>([]);
   const [summary, setSummary] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -26,8 +16,10 @@ export default function ContradictionsPage() {
     setError(undefined);
     try {
       const s = await api.analyzeContradictions();
-      setSummary(`${s.analyzed} relations, ${s.contradictions} contradictions, ${s.supports} supports`);
-      const list = (await api.contradictions("CONTRADICTS")) as unknown as Edge[];
+      setSummary(
+        `${s.analyzed} relations, ${s.contradictions} contradictions, ${s.supports} supports`,
+      );
+      const list = await api.contradictions("CONTRADICTS");
       setEdges(list);
     } catch (e) {
       setError(String(e));
@@ -42,7 +34,8 @@ export default function ContradictionsPage() {
         <div>
           <h1 className="text-xl font-semibold text-white">Contradictions</h1>
           <p className="text-sm text-muted">
-            Where the corpus disagrees: claims on the same concept that conflict.
+            Where the corpus disagrees: claims on the same concept that
+            conflict.
           </p>
         </div>
         <button className="btn-accent" onClick={run} disabled={busy}>
@@ -63,11 +56,21 @@ export default function ContradictionsPage() {
             <div key={i} className="card border-warn/40">
               <div className="mb-2 flex items-center gap-2">
                 <span className="chip border-warn text-warn">CONTRADICTS</span>
-                <span className="text-xs text-muted">confidence {e.confidence.toFixed(2)}</span>
+                <span className="text-xs text-muted">
+                  confidence {e.confidence.toFixed(2)}
+                </span>
               </div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                <Side text={e.source_text} paper={e.source_paper} evidence={e.source_evidence} />
-                <Side text={e.target_text} paper={e.target_paper} evidence={e.target_evidence} />
+                <Side
+                  text={e.source_text}
+                  paper={e.source_paper}
+                  evidence={e.source_evidence}
+                />
+                <Side
+                  text={e.target_text}
+                  paper={e.target_paper}
+                  evidence={e.target_evidence}
+                />
               </div>
             </div>
           ))}
@@ -77,7 +80,15 @@ export default function ContradictionsPage() {
   );
 }
 
-function Side({ text, paper, evidence }: { text: string; paper: string; evidence: string }) {
+function Side({
+  text,
+  paper,
+  evidence,
+}: {
+  text: string;
+  paper: string;
+  evidence: string;
+}) {
   return (
     <div className="rounded-md border border-border bg-panel2 p-2 text-sm">
       <p className="text-ink">{text}</p>

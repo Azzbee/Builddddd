@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hmac
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from lattice import __version__
@@ -24,10 +25,13 @@ from lattice.api import (
     reading,
     watch,
 )
+from lattice.api.deps import require_auth
 from lattice.config import get_settings
 from lattice.core.logging import configure_logging
 from lattice.core.metrics import REGISTRY
 from lattice.core.ratelimit import SlidingWindowLimiter
+
+CallNext = Callable[[Request], Awaitable[Response]]
 
 
 def create_app() -> FastAPI:
@@ -51,10 +55,13 @@ def create_app() -> FastAPI:
         version=__version__,
         description="A living knowledge graph for scientific literature.",
         lifespan=lifespan,
+        docs_url=None if settings.environment == "prod" else "/docs",
+        redoc_url=None if settings.environment == "prod" else "/redoc",
+        openapi_url=None if settings.environment == "prod" else "/openapi.json",
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # tighten in production via config/reverse proxy
+        allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -63,12 +70,19 @@ def create_app() -> FastAPI:
     _EXEMPT = {"/health", "/healthz", "/readyz", "/metrics"}
 
     @app.middleware("http")
-    async def _rate_limit_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def _rate_limit_middleware(request: Request, call_next: CallNext) -> Response:
         if request.url.path in _EXEMPT:
             return await call_next(request)
-        # Key by auth token when present, else client host (best-effort behind a proxy).
         auth = request.headers.get("authorization")
-        key = auth or (request.client.host if request.client else "anonymous")
+        expected = f"Bearer {settings.auth_token}" if settings.auth_token else None
+        authenticated = (
+            expected is not None and auth is not None and hmac.compare_digest(auth, expected)
+        )
+        key = (
+            "authenticated"
+            if authenticated
+            else (request.client.host if request.client else "anonymous")
+        )
         allowed, retry_after = limiter.allow(key)
         if not allowed:
             REGISTRY.inc("lattice_http_rate_limited_total", help="Rate-limited requests")
@@ -81,7 +95,7 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     @app.middleware("http")
-    async def _metrics_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def _metrics_middleware(request: Request, call_next: CallNext) -> Response:
         start = time.perf_counter()
         response = await call_next(request)
         elapsed = time.perf_counter() - start
@@ -98,7 +112,11 @@ def create_app() -> FastAPI:
         )
         return response
 
-    @app.get("/metrics", include_in_schema=False)
+    @app.get(
+        "/metrics",
+        include_in_schema=False,
+        dependencies=[Depends(require_auth)],
+    )
     async def metrics() -> Response:
         return Response(content=REGISTRY.render(), media_type="text/plain; version=0.0.4")
 

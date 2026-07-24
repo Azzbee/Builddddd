@@ -67,7 +67,9 @@ def build_fastmcp(toolbox: Toolbox) -> Any:  # pragma: no cover - requires the m
     async def graph_neighbors(paper_id: str, min_weight: float = 0.0, hops: int = 1) -> Any:
         """Typed graph traversal from a paper along RELATED_TO edges."""
         return await call_mcp_tool(
-            toolbox, "graph_neighbors", {"paper_id": paper_id, "min_weight": min_weight, "hops": hops}
+            toolbox,
+            "graph_neighbors",
+            {"paper_id": paper_id, "min_weight": min_weight, "hops": hops},
         )
 
     @server.tool()

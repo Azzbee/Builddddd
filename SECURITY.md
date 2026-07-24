@@ -7,10 +7,29 @@ for vulnerabilities. You will get an acknowledgement within a few days.
 
 ## Security posture
 
-- **Auth**: single-user bearer token (`LATTICE_AUTH_TOKEN`). All non-health routes
-  require it when set. Multi-user auth (Supabase) is schema-ready.
+- **Auth**: single-user bearer token (`LATTICE_AUTH_TOKEN`). Production startup
+  fails if it is missing. All routes except liveness and readiness require the
+  configured token. The workspace listing and metrics endpoint are authenticated.
+- **API schema**: Swagger, ReDoc, and the OpenAPI document are disabled in
+  production. They remain available in development.
+- **Browser secret handling**: browser requests use the same-origin Next.js
+  `/api` route. The server removes browser-provided authorization and injects the
+  bearer token from its private environment. The token is never sent in a
+  JavaScript bundle, URL, local storage, or public environment variable.
+- **Proxy boundary**: the Next.js proxy forwards an explicit header allowlist,
+  cancels upstream work when the browser disconnects, and rejects request bodies
+  over `LATTICE_PROXY_MAX_BODY_MB` before forwarding them.
+- **Browser policy**: every web response carries a Content Security Policy,
+  clickjacking protection, MIME-sniffing protection, a no-referrer policy, and a
+  denylist for unused camera, microphone, geolocation, and browsing-topics APIs.
+- **CORS**: origins come from `LATTICE_CORS_ORIGINS`; production rejects a
+  wildcard. The default permits only `http://localhost:3000`.
+- **Workspace isolation**: workspace IDs are validated before store lookup and
+  one process caches at most `LATTICE_MAX_WORKSPACES` containers.
 - **Rate limiting**: per-client sliding-window limiter on the API
-  (`LATTICE_RATE_LIMIT_PER_MIN`).
+  (`LATTICE_RATE_LIMIT_PER_MIN`). Only the configured bearer token can identify
+  an authenticated client, so invented authorization headers cannot rotate the
+  rate-limit key.
 - **Cypher safety**: the agent's `run_cypher` tool is validated against a read-only
   allowlist (writes, multiple statements, and missing RETURN are rejected) and a
   LIMIT is enforced. Edge-type identifiers in traversals are whitelisted to prevent
@@ -24,10 +43,15 @@ for vulnerabilities. You will get an acknowledgement within a few days.
   overspend.
 - **Privacy**: uploaded PDFs are stored privately and never re-published; exports
   contain only structured notes and short quotes.
+- **Dependency checks**: CI runs `npm audit` at moderate severity and `pip-audit`
+  across every Python extra. Both ecosystems install from committed lockfiles;
+  the backend image also uses `uv sync --locked` with a pinned uv image.
 
 ## Hardening checklist for production
 
-- Set a strong `LATTICE_AUTH_TOKEN` and `LATTICE_NEO4J__PASSWORD`.
+- Set `LATTICE_ENVIRONMENT=prod`, a strong `LATTICE_AUTH_TOKEN`, and a strong
+  `LATTICE_NEO4J__PASSWORD`.
 - Put the API behind TLS (Cloudflare Tunnel or a reverse proxy).
-- Restrict CORS origins (currently permissive for development).
-- Run nightly backups (`scripts/backup.sh`).
+- Set an explicit `LATTICE_CORS_ORIGINS` list for the deployed web origin.
+- Keep `LATTICE_MAX_WORKSPACES` bounded for the available memory.
+- Run nightly validated backups (`scripts/backup.sh`) and schedule restore drills.

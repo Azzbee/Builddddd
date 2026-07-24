@@ -37,7 +37,10 @@ export function Nav() {
 
   return (
     <nav className="flex flex-wrap items-center gap-1 border-b border-border bg-panel px-4 py-2.5">
-      <Link href="/" className="mr-4 font-mono text-sm font-semibold tracking-tight text-white">
+      <Link
+        href="/"
+        className="mr-4 font-mono text-sm font-semibold tracking-tight text-white"
+      >
         lattice<span className="text-accent">.</span>
       </Link>
       {LINKS.map((l) => {
@@ -54,14 +57,19 @@ export function Nav() {
           </Link>
         );
       })}
-      <label className="ml-auto flex items-center gap-1 text-xs text-muted" title="Corpus / workspace">
+      <label
+        className="ml-auto flex items-center gap-1 text-xs text-muted"
+        title="Corpus / workspace"
+      >
         corpus
         <input
           key={ws}
           aria-label="workspace"
           defaultValue={ws}
           onBlur={(e) => e.target.value.trim() !== ws && commit(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && commit((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) =>
+            e.key === "Enter" && commit((e.target as HTMLInputElement).value)
+          }
           className="w-28 rounded-md border border-border bg-panel2 px-2 py-1 text-xs text-ink outline-none focus:border-accent"
         />
       </label>

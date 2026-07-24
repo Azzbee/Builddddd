@@ -12,7 +12,9 @@ async def graph(
     min_weight: float = Query(0.0, ge=0.0, le=1.0),
     year_from: int | None = None,
     year_to: int | None = None,
-    as_of_year: int | None = Query(None, description="Reconstruct the graph as of this publication year"),
+    as_of_year: int | None = Query(
+        None, description="Reconstruct the graph as of this publication year"
+    ),
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
     """Nodes + edges for the explorer, filtered by weight and year.
@@ -25,6 +27,7 @@ async def graph(
     edges = snapshot.edges
 
     if year_from is not None or year_to is not None:
+
         def in_range(year: int | None) -> bool:
             if year is None:
                 return False

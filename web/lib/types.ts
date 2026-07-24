@@ -6,6 +6,7 @@ export interface PaperSummary {
   paper_type: string;
   confidence: number;
   needs_review: boolean;
+  superseded_by?: string | null;
 }
 
 export interface ResultItem {
@@ -39,6 +40,7 @@ export interface PaperCard {
   year: number | null;
   venue: string | null;
   doi: string | null;
+  superseded_by?: string | null;
   arxiv_id: string | null;
   abstract: string | null;
   problem_statement: string;
@@ -151,7 +153,11 @@ export interface MatrixCell {
   state: string;
   global_count: number;
   gap_score: number;
-  components: { feasibility: number; adjacency_pressure: number; demand_signal: number };
+  components: {
+    feasibility: number;
+    adjacency_pressure: number;
+    demand_signal: number;
+  };
 }
 
 export interface ProposalEvidence {
@@ -187,9 +193,63 @@ export interface ResearchProposal {
 
 export interface IngestJob {
   job_id: string;
+  source_ref: string;
   paper_id: string | null;
-  stage: string;
-  status: string;
+  stage:
+    | "received"
+    | "parsing"
+    | "extracting"
+    | "enriching"
+    | "embedding"
+    | "linking"
+    | "done";
+  status:
+    "queued" | "running" | "paused" | "failed" | "duplicate" | "succeeded";
   error_code: string | null;
+  error_message: string | null;
+  retryable: boolean;
+  attempts: number;
   progress?: number;
+}
+
+export interface WatchCandidate {
+  arxiv_id: string;
+  title: string;
+  similarity: number;
+  nearest_paper_id: string | null;
+  pdf_url: string | null;
+}
+
+export interface ReadingQueueItem {
+  paper_id: string;
+  title: string;
+  gain: number;
+  neighborhood_value: number;
+  method_novelty: number;
+  novel_methods: string[];
+}
+
+export interface MomentumMover {
+  concept: string;
+  velocity: number;
+  acceleration: number;
+  burst: number;
+  author_influx: number;
+  community_convergence: number;
+  maturity: string;
+  composite: number;
+  counts: Record<number, number>;
+}
+
+export interface ClaimRelationEdge {
+  source_id: string;
+  target_id: string;
+  source_paper: string;
+  target_paper: string;
+  relation: string;
+  confidence: number;
+  source_text: string;
+  target_text: string;
+  source_evidence: string;
+  target_evidence: string;
 }

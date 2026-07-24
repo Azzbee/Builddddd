@@ -37,7 +37,11 @@ class VectorStore(Protocol):
         self, embedding: list[float], k: int, *, workspace_id: str, exclude_paper: str | None = None
     ) -> list[tuple[str, float]]: ...
     async def hybrid_search(
-        self, query_text: str, query_embedding: list[float], k: int, filters: dict[str, Any] | None = None
+        self,
+        query_text: str,
+        query_embedding: list[float],
+        k: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[ChunkHit]: ...
 
 
@@ -105,7 +109,11 @@ class InMemoryVectorStore:
         return score
 
     async def hybrid_search(
-        self, query_text: str, query_embedding: list[float], k: int, filters: dict[str, Any] | None = None
+        self,
+        query_text: str,
+        query_embedding: list[float],
+        k: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[ChunkHit]:
         ws = (filters or {}).get("workspace_id")
         q = np.asarray(query_embedding, dtype=float)
@@ -157,10 +165,12 @@ GROUP BY paper_id ORDER BY sim DESC LIMIT $4
 SQL_HYBRID_SEARCH = """
 SELECT chunk_id, paper_id, title, section_title, text, evidence_location, page,
        (1 - (embedding <=> $1)) AS vec_score,
-       ts_rank(to_tsvector('english', text), plainto_tsquery('english', $2)) AS kw_score
+       ts_rank(to_tsvector('english', text), plainto_tsquery('english', $2)) AS kw_score,
+       ($4 * (1 - (embedding <=> $1))) +
+       ((1 - $4) * ts_rank(to_tsvector('english', text), plainto_tsquery('english', $2)))
+           AS fused_score
 FROM chunks WHERE workspace_id = $3
-ORDER BY ($4 * (1 - (embedding <=> $1))) +
-         ((1 - $4) * ts_rank(to_tsvector('english', text), plainto_tsquery('english', $2))) DESC
+ORDER BY fused_score DESC
 LIMIT $5
 """
 
@@ -172,7 +182,9 @@ PGVECTOR_SQL = {
 }
 
 
-async def create_pg_pool(dsn: str, *, min_size: int = 1, max_size: int = 10) -> Any:  # pragma: no cover
+async def create_pg_pool(
+    dsn: str, *, min_size: int = 1, max_size: int = 10
+) -> Any:  # pragma: no cover
     """Create an asyncpg pool with pgvector type codecs registered per connection."""
     import asyncpg
     from pgvector.asyncpg import register_vector
@@ -199,8 +211,17 @@ class PgVectorStore:  # pragma: no cover - requires Postgres + pgvector
             await conn.executemany(
                 SQL_UPSERT_CHUNK,
                 [
-                    (r.chunk_id, r.paper_id, r.workspace_id, r.title, r.section_title,
-                     r.text, r.embedding, r.evidence_location, r.page)
+                    (
+                        r.chunk_id,
+                        r.paper_id,
+                        r.workspace_id,
+                        r.title,
+                        r.section_title,
+                        r.text,
+                        r.embedding,
+                        r.evidence_location,
+                        r.page,
+                    )
                     for r in records
                 ],
             )
@@ -213,18 +234,30 @@ class PgVectorStore:  # pragma: no cover - requires Postgres + pgvector
             return [(r["paper_id"], float(r["sim"])) for r in rows]
 
     async def hybrid_search(
-        self, query_text: str, query_embedding: list[float], k: int, filters: dict[str, Any] | None = None
+        self,
+        query_text: str,
+        query_embedding: list[float],
+        k: int,
+        filters: dict[str, Any] | None = None,
     ) -> list[ChunkHit]:
         ws = (filters or {}).get("workspace_id", self.workspace_id)
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 SQL_HYBRID_SEARCH, query_embedding, query_text, ws, self.hybrid_vector_weight, k
             )
+            # Report the fused score so ranking is monotonic in `score` and matches
+            # the InMemoryVectorStore contract (which also returns the fused value).
+            # Returning only vec_score here made displayed scores non-monotonic and
+            # disagree between the Postgres and in-memory backends.
             return [
                 ChunkHit(
-                    chunk_id=r["chunk_id"], paper_id=r["paper_id"], title=r["title"],
-                    section_title=r["section_title"], text=r["text"],
-                    score=float(r["vec_score"]), evidence_location=r["evidence_location"],
+                    chunk_id=r["chunk_id"],
+                    paper_id=r["paper_id"],
+                    title=r["title"],
+                    section_title=r["section_title"],
+                    text=r["text"],
+                    score=float(r["fused_score"]),
+                    evidence_location=r["evidence_location"],
                     page=r["page"],
                 )
                 for r in rows

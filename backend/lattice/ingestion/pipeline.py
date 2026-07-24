@@ -9,8 +9,11 @@ Failures map to typed statuses:
 * any other :class:`LatticeError` -> status FAILED with a machine-readable code
 
 Because ``job.stage`` is always the last *completed* stage and is persisted after
-each step, a crash resumes exactly where it left off. Linking is the final,
-transactional stage, so a crash never leaves a partial paper in the graph.
+each step, a crash resumes exactly where it left off. Linking is the final stage
+and touches the graph last, so a crash before it leaves no paper in the graph; its
+writes are idempotent MERGEs, so a re-run of a partially-linked paper converges
+rather than duplicating. (Linking is not a single cross-store transaction, so this
+relies on idempotency, not rollback.)
 """
 
 from __future__ import annotations
@@ -50,6 +53,10 @@ class JobStore(Protocol):
     async def save(self, job: IngestJob) -> None: ...
 
 
+class ArtifactStore(Protocol):
+    async def save_context(self, ctx: PipelineContext) -> None: ...
+
+
 class _NullStore:
     async def save(self, job: IngestJob) -> None:  # pragma: no cover - trivial
         return None
@@ -62,10 +69,12 @@ class IngestionPipeline:
         self,
         handlers: dict[JobStage, StageFn],
         store: JobStore | None = None,
+        artifact_store: ArtifactStore | None = None,
         max_attempts: int = 3,
     ):
         self._handlers = handlers
         self._store = store or _NullStore()
+        self._artifact_store = artifact_store
         self._max_attempts = max_attempts
 
     async def _persist(self, job: IngestJob) -> None:
@@ -75,8 +84,14 @@ class IngestionPipeline:
     async def run(self, ctx: PipelineContext) -> IngestJob:
         """Advance the job until it reaches a terminal or paused state."""
         job = ctx.job
-        # A PAUSED/FAILED job re-entering run() resumes from its last completed
-        # stage; the loop only stops on a terminal status (or an inner pause break).
+        if job.status in (JobStatus.PAUSED, JobStatus.FAILED):
+            if not job.retryable or job.attempts >= self._max_attempts:
+                return job
+            job.status = JobStatus.QUEUED
+            job.error_code = None
+            job.error_message = None
+            job.retryable = False
+        await self._persist(job)
         while not job.is_terminal:
             target = next_stage(job.stage)
             if target is None or target == JobStage.DONE:
@@ -98,8 +113,10 @@ class IngestionPipeline:
                 job.status = JobStatus.DUPLICATE
                 job.error_code = exc.code
                 job.error_message = str(exc)
+                job.retryable = False
                 if not job.paper_id:
-                    job.paper_id = ctx.extra.get("duplicate_of")  # type: ignore[assignment]
+                    duplicate_of = ctx.extra.get("duplicate_of")
+                    job.paper_id = duplicate_of if isinstance(duplicate_of, str) else None
                 await self._persist(job)
                 log.info("ingest.duplicate", job_id=job.job_id, of=job.paper_id)
                 break
@@ -107,6 +124,7 @@ class IngestionPipeline:
                 job.status = JobStatus.PAUSED
                 job.error_code = exc.code
                 job.error_message = str(exc)
+                job.retryable = True
                 await self._persist(job)
                 log.warning("ingest.paused", job_id=job.job_id, stage=target, reason=exc.code)
                 break
@@ -114,6 +132,7 @@ class IngestionPipeline:
                 job.attempts += 1
                 job.error_code = exc.code
                 job.error_message = str(exc)
+                job.retryable = exc.retryable and job.attempts < self._max_attempts
                 job.status = JobStatus.FAILED
                 await self._persist(job)
                 log.error(
@@ -125,10 +144,32 @@ class IngestionPipeline:
                     attempts=job.attempts,
                 )
                 break
+            except Exception:
+                job.attempts += 1
+                job.error_code = "internal_error"
+                job.error_message = "an unexpected ingestion stage failure occurred"
+                job.retryable = job.attempts < self._max_attempts
+                job.status = JobStatus.FAILED
+                await self._persist(job)
+                log.exception(
+                    "ingest.stage_crashed",
+                    job_id=job.job_id,
+                    stage=target,
+                    attempts=job.attempts,
+                    retryable=job.retryable,
+                )
+                break
             else:
+                cost = ctx.extra.get("cost")
+                usage = getattr(cost, "job_usage", None)
+                if usage is not None:
+                    job.cost_usd = float(getattr(usage, "cost_usd", job.cost_usd))
                 job.stage = target
                 job.error_code = None
                 job.error_message = None
+                job.retryable = False
+                if self._artifact_store is not None:
+                    await self._artifact_store.save_context(ctx)
                 await self._persist(job)
                 log.info("ingest.stage_complete", job_id=job.job_id, stage=target)
 

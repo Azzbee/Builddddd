@@ -67,7 +67,10 @@ def _papers() -> list[PaperFacets]:
 
 def test_gap_matrix_classifies_cells() -> None:
     cells = build_gap_matrix(
-        _papers(), "method", "dataset", now_year=2026,
+        _papers(),
+        "method",
+        "dataset",
+        now_year=2026,
         global_count_fn=lambda r, c: 100 if (r, c) == ("LSTM", "COMEX") else 0,
     )
     by_key = {(c.row, c.col): c for c in cells}
@@ -85,7 +88,10 @@ def test_gap_matrix_contested_via_contradiction() -> None:
         PaperFacets("b", 2024, methods={"LSTM"}, datasets={"LME"}),
     ]
     cells = build_gap_matrix(
-        papers, "method", "dataset", now_year=2026,
+        papers,
+        "method",
+        "dataset",
+        now_year=2026,
         contradiction_pairs={frozenset({"a", "b"})},
     )
     assert cells[0].state == CellState.CONTESTED
@@ -93,7 +99,10 @@ def test_gap_matrix_contested_via_contradiction() -> None:
 
 def test_gap_matrix_structurally_empty_excluded_from_gaps() -> None:
     cells = build_gap_matrix(
-        _papers(), "method", "dataset", now_year=2026,
+        _papers(),
+        "method",
+        "dataset",
+        now_year=2026,
         feasibility_fn=lambda r, c: 0.0,  # everything nonsensical
         global_count_fn=lambda r, c: 50,
     )
@@ -104,7 +113,10 @@ def test_gap_matrix_structurally_empty_excluded_from_gaps() -> None:
 
 def test_gap_score_ranks_pressured_demanded_cells() -> None:
     cells = build_gap_matrix(
-        _papers(), "method", "dataset", now_year=2026,
+        _papers(),
+        "method",
+        "dataset",
+        now_year=2026,
         global_count_fn=lambda r, c: 5,
         demand_fn=lambda r, c: 1.0 if (r, c) == ("LSTM", "COMEX") else 0.0,
     )
@@ -116,12 +128,18 @@ def test_gap_score_ranks_pressured_demanded_cells() -> None:
 # --------------------------------------------------------------------------- claim clustering
 def test_cluster_claims_groups_paraphrases() -> None:
     items = [
-        ("LSTM with attention significantly improves forecasting accuracy over ARIMA",
-         SupportingPaper("p1", frozenset({"doe"}), method="LSTM", year=2019)),
-        ("GRU improves forecasting accuracy on industrial metals versus ARIMA",
-         SupportingPaper("p2", frozenset({"zhang"}), method="GRU", year=2020)),
-        ("GARCH captures volatility clustering better than rolling-window baselines",
-         SupportingPaper("p3", frozenset({"hassan"}), method="GARCH", year=2017)),
+        (
+            "LSTM with attention significantly improves forecasting accuracy over ARIMA",
+            SupportingPaper("p1", frozenset({"doe"}), method="LSTM", year=2019),
+        ),
+        (
+            "GRU improves forecasting accuracy on industrial metals versus ARIMA",
+            SupportingPaper("p2", frozenset({"zhang"}), method="GRU", year=2020),
+        ),
+        (
+            "GARCH captures volatility clustering better than rolling-window baselines",
+            SupportingPaper("p3", frozenset({"hassan"}), method="GARCH", year=2017),
+        ),
     ]
     clusters = cluster_claims(items)
     # The two "improves forecasting accuracy over ARIMA" claims merge; GARCH stands alone.
@@ -135,10 +153,14 @@ def test_cluster_claims_does_not_merge_opposite_polarity() -> None:
     # "improves" and "shows no improvement" share subject tokens but must NOT cluster,
     # else a claim and its negation get conflated into one "finding".
     items = [
-        ("Transformers improve forecasting accuracy over LSTM baselines",
-         SupportingPaper("p1", frozenset({"a"}), year=2022)),
-        ("Transformers show no significant improvement in forecasting accuracy over LSTM",
-         SupportingPaper("p2", frozenset({"b"}), year=2023)),
+        (
+            "Transformers improve forecasting accuracy over LSTM baselines",
+            SupportingPaper("p1", frozenset({"a"}), year=2022),
+        ),
+        (
+            "Transformers show no significant improvement in forecasting accuracy over LSTM",
+            SupportingPaper("p2", frozenset({"b"}), year=2023),
+        ),
     ]
     clusters = cluster_claims(items)
     assert len(clusters) == 2
@@ -149,10 +171,14 @@ def test_cluster_claims_feeds_known_knowns() -> None:
     # End to end: paraphrased convergent claims from independent authors -> a finding
     # that exact-text grouping would have missed entirely.
     items = [
-        ("LSTM improves forecasting accuracy over ARIMA",
-         SupportingPaper("p1", frozenset({"doe"}), method="LSTM", dataset="LME", year=2019)),
-        ("GRU improves forecasting accuracy versus ARIMA",
-         SupportingPaper("p2", frozenset({"zhang"}), method="GRU", dataset="COMEX", year=2020)),
+        (
+            "LSTM improves forecasting accuracy over ARIMA",
+            SupportingPaper("p1", frozenset({"doe"}), method="LSTM", dataset="LME", year=2019),
+        ),
+        (
+            "GRU improves forecasting accuracy versus ARIMA",
+            SupportingPaper("p2", frozenset({"zhang"}), method="GRU", dataset="COMEX", year=2020),
+        ),
     ]
     grouped = {c.canonical: c.papers for c in cluster_claims(items)}
     findings = consolidate_known_knowns(grouped)
@@ -223,3 +249,16 @@ def test_cross_community_transfer_skips_close_pairs() -> None:
         sources, targets, distance_fn=lambda a, b: 1, min_distance=3
     )
     assert candidates == []
+
+
+def test_cross_community_transfer_min_distance_is_inclusive() -> None:
+    sources = [("m", "A1", [1.0, 0.0])]
+    targets = [("B1", [1.0, 0.0])]
+    # A pair exactly min_distance apart qualifies (boundary: dist == min_distance).
+    at_boundary = cross_community_transfer(
+        sources, targets, distance_fn=lambda a, b: 3, min_distance=3
+    )
+    assert len(at_boundary) == 1
+    # One hop closer than the boundary does not.
+    below = cross_community_transfer(sources, targets, distance_fn=lambda a, b: 2, min_distance=3)
+    assert below == []

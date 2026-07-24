@@ -1,17 +1,25 @@
 "use client";
 
+import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { PaperCard, PdfMeta } from "@/lib/types";
 
-export default function PaperPage({ params }: { params: Promise<{ id: string }> }) {
+export default function PaperPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = use(params);
   const [card, setCard] = useState<PaperCard | null>(null);
   const [error, setError] = useState<string>();
   const [initialPage, setInitialPage] = useState<number | undefined>(undefined);
 
   useEffect(() => {
-    api.getPaper(id).then(setCard).catch((e) => setError(String(e)));
+    api
+      .getPaper(id)
+      .then(setCard)
+      .catch((e) => setError(String(e)));
   }, [id]);
 
   useEffect(() => {
@@ -20,12 +28,22 @@ export default function PaperPage({ params }: { params: Promise<{ id: string }> 
     if (p > 0) setInitialPage(p);
   }, []);
 
-  if (error) return <div className="card border-bad text-bad">Not found: {error}</div>;
+  if (error)
+    return <div className="card border-bad text-bad">Not found: {error}</div>;
   if (!card) return <div className="text-sm text-muted">Loading...</div>;
 
   return (
     <article className="space-y-5">
       <header>
+        {card.superseded_by && (
+          <div className="mb-2 card border-warn text-sm text-warn">
+            This version has been superseded by the published version.{" "}
+            <Link href={`/papers/${card.superseded_by}`} className="underline">
+              Open the current version
+            </Link>
+            .
+          </div>
+        )}
         <h1 className="text-xl font-semibold text-white">{card.title}</h1>
         <p className="text-sm text-muted">
           {card.authors.map((a) => a.name).join(", ")} · {card.year ?? "?"}
@@ -36,7 +54,9 @@ export default function PaperPage({ params }: { params: Promise<{ id: string }> 
           <span className="chip">confidence {card.confidence.toFixed(2)}</span>
           {card.doi && <span className="chip">doi:{card.doi}</span>}
           {card.arxiv_id && <span className="chip">arXiv:{card.arxiv_id}</span>}
-          {card.needs_review && <span className="chip border-warn text-warn">needs review</span>}
+          {card.needs_review && (
+            <span className="chip border-warn text-warn">needs review</span>
+          )}
         </div>
       </header>
 
@@ -60,7 +80,10 @@ export default function PaperPage({ params }: { params: Promise<{ id: string }> 
                 <span className="text-ink">{d.name}</span>
                 {d.source && <span className="text-muted"> · {d.source}</span>}
                 {d.is_public != null && (
-                  <span className="text-muted"> · {d.is_public ? "public" : "private"}</span>
+                  <span className="text-muted">
+                    {" "}
+                    · {d.is_public ? "public" : "private"}
+                  </span>
                 )}
               </li>
             ))}
@@ -74,13 +97,25 @@ export default function PaperPage({ params }: { params: Promise<{ id: string }> 
         ) : (
           <ul className="space-y-2 text-sm">
             {card.key_results.map((r, i) => (
-              <li key={i} className="rounded-md border border-border bg-panel2 p-2">
+              <li
+                key={i}
+                className="rounded-md border border-border bg-panel2 p-2"
+              >
                 <div className="text-ink">{r.claim}</div>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  {r.metric && <span className="chip">{r.metric}{r.value ? ` ${r.value}` : ""}</span>}
-                  {r.baseline_comparison && <span className="chip">vs {r.baseline_comparison}</span>}
+                  {r.metric && (
+                    <span className="chip">
+                      {r.metric}
+                      {r.value ? ` ${r.value}` : ""}
+                    </span>
+                  )}
+                  {r.baseline_comparison && (
+                    <span className="chip">vs {r.baseline_comparison}</span>
+                  )}
                   {r.evidence_location && (
-                    <span className="chip border-accent text-accent">{r.evidence_location}</span>
+                    <span className="chip border-accent text-accent">
+                      {r.evidence_location}
+                    </span>
                   )}
                 </div>
               </li>
@@ -107,14 +142,23 @@ export default function PaperPage({ params }: { params: Promise<{ id: string }> 
   );
 }
 
-function PdfReader({ paperId, initialPage }: { paperId: string; initialPage?: number }) {
+function PdfReader({
+  paperId,
+  initialPage,
+}: {
+  paperId: string;
+  initialPage?: number;
+}) {
   const [meta, setMeta] = useState<PdfMeta | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [page, setPage] = useState<number | undefined>(initialPage);
   const [open, setOpen] = useState<boolean>(initialPage != null);
 
   useEffect(() => {
-    api.pdfMeta(paperId).then(setMeta).catch(() => setMeta(null));
+    api
+      .pdfMeta(paperId)
+      .then(setMeta)
+      .catch(() => setMeta(null));
   }, [paperId]);
 
   // A deep-link page may resolve after mount; open the reader at it when it does.
@@ -151,7 +195,9 @@ function PdfReader({ paperId, initialPage }: { paperId: string; initialPage?: nu
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-white">Source PDF</h2>
         <div className="flex items-center gap-2 text-xs text-muted">
-          <span>{readable ? `${meta.pages} pages` : "stored (no preview)"}</span>
+          <span>
+            {readable ? `${meta.pages} pages` : "stored (no preview)"}
+          </span>
           {readable && (
             <button className="btn" onClick={() => setOpen((v) => !v)}>
               {open ? "Hide" : "Open reader"}
@@ -173,7 +219,10 @@ function PdfReader({ paperId, initialPage }: { paperId: string; initialPage?: nu
       {open && readable && page && (
         <p className="mt-1 text-xs text-muted">
           Jumped to page {page}.{" "}
-          <button className="text-accent hover:underline" onClick={() => setPage(undefined)}>
+          <button
+            className="text-accent hover:underline"
+            onClick={() => setPage(undefined)}
+          >
             show from start
           </button>
         </p>
@@ -182,7 +231,13 @@ function PdfReader({ paperId, initialPage }: { paperId: string; initialPage?: nu
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="card">
       <h2 className="mb-2 text-sm font-semibold text-white">{title}</h2>

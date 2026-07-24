@@ -188,6 +188,27 @@ async def test_writer_uses_merge_for_idempotency() -> None:
     assert any("USES_METHOD" in q for q, _ in store.calls)
 
 
+async def test_writer_audit_uses_merge_not_create() -> None:
+    # The audit trail must be idempotent on a linking-stage replay: MERGE on the
+    # change identity, never a bare CREATE (which duplicated rows on retry).
+    store = FakeGraphStore()
+    writer = GraphWriter(store, "ws1")
+    entry = {
+        "src": "p1",
+        "dst": "p2",
+        "old": 0.4,
+        "new": 0.6,
+        "reason": "ingest",
+        "at": "2024-01-01",
+    }
+    await writer.write_audit([entry])
+    q, _ = store.calls[-1]
+    # MERGE on the change identity; only `ON CREATE SET` may mention CREATE, never a
+    # bare `CREATE (` node write (which duplicated on replay).
+    assert "MERGE (" in q and "CREATE (" not in q
+    assert "new_weight: $new" in q and "reason: $reason" in q
+
+
 async def test_writer_related_edge_serializes_components() -> None:
     w = SimilarityWeights()
     cal = CosineCalibrator(lo=0.0, hi=1.0, fitted=True)

@@ -11,27 +11,33 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend (ruff, mypy, pytest)
+    name: Backend (format, lint, typecheck, test)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - name: Set up Python
         run: uv venv --python 3.11
-      - name: Install dependencies
-        run: uv pip install -e ".[dev,api]"
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev --extra api
       - name: Ruff
-        run: uv run ruff check .
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
       - name: Mypy
         run: uv run mypy lattice
       - name: Pytest
         run: uv run pytest --cov=lattice --cov-report=term-missing --cov-fail-under=85
+      - name: Audit every locked Python extra
+        run: |
+          uv export --locked --all-extras --no-emit-project --output-file /tmp/lattice-requirements.txt
+          uv run pip-audit --disable-pip --require-hashes --requirement /tmp/lattice-requirements.txt
 
   eval:
     name: Evals (extraction / retrieval / edge quality)
@@ -40,12 +46,12 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv venv --python 3.11
-      - run: uv pip install -e ".[dev]"
+      - run: uv sync --locked --extra dev
       - name: Run eval harness (offline, deterministic backends)
         run: uv run python ../scripts/run_eval.py --ci
 
@@ -83,31 +89,34 @@ jobs:
       LATTICE_TEST_NEO4J_USER: neo4j
       LATTICE_TEST_NEO4J_PASSWORD: lattice-dev-password
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: uv venv --python 3.11
       # api extra is needed because pytest imports all test modules during
       # collection (test_api/test_demo import FastAPI) before -m filtering.
-      - run: uv pip install -e ".[dev,db,api]"
+      - run: uv sync --locked --extra dev --extra db --extra api
       - name: Run live integration tests
         run: uv run pytest -m integration -v
 
   web:
-    name: Web (lint, typecheck, build)
+    name: Web (format, lint, test, typecheck, build, audit)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci || npm install
-      - run: npm run lint --if-present
-      - run: npm run typecheck --if-present
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run typecheck
       - run: npm run build
+      - run: npm audit --audit-level=moderate

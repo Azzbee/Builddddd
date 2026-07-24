@@ -22,11 +22,12 @@ from pydantic import ValidationError
 
 from lattice.config import ExtractionSettings
 from lattice.core.cost import CostTracker
-from lattice.core.errors import SchemaValidationError
+from lattice.core.errors import CostCapExceeded, SchemaValidationError
 from lattice.core.llm import LLMClient, LLMMessage
 from lattice.core.logging import get_logger
 from lattice.extraction.prompts import load_prompt, prompt_hash
 from lattice.extraction.schemas import Author, LLMPaperCardContent, PaperCard
+from lattice.extraction.skeleton import schema_skeleton
 
 log = get_logger("extraction")
 
@@ -49,12 +50,16 @@ def render_prompt(
     max_chars: int,
 ) -> str:
     template = load_prompt(version)
+    # str.format inserts a field's value verbatim (it does not re-scan the inserted
+    # text for braces), so the skeleton's JSON braces pass through as-is. The body is
+    # substituted the same way; only the template's own {..} fields are interpreted.
     return template.format(
         title=title or "(unknown)",
         authors=", ".join(authors) if authors else "(unknown)",
         year=year if year is not None else "(unknown)",
         body=body[:max_chars],
         low_confidence_notice=_LOW_CONF_NOTICE if low_confidence else "",
+        schema=schema_skeleton(LLMPaperCardContent),
     )
 
 
@@ -75,9 +80,7 @@ def completeness(content: LLMPaperCardContent) -> float:
 def score_confidence(content: LLMPaperCardContent, parse_confidence: float) -> float:
     """Blend self-report, completeness, and parser confidence into [0, 1]."""
     return round(
-        0.5 * content.self_confidence
-        + 0.3 * completeness(content)
-        + 0.2 * parse_confidence,
+        0.5 * content.self_confidence + 0.3 * completeness(content) + 0.2 * parse_confidence,
         4,
     )
 
@@ -122,6 +125,40 @@ async def _call_with_repair(
     raise SchemaValidationError(f"extraction failed after {max_repair} repairs: {last_error[:300]}")
 
 
+async def _extract_content(
+    llm: LLMClient,
+    prompt: str,
+    settings: ExtractionSettings,
+    cost: CostTracker | None,
+) -> tuple[LLMPaperCardContent, str]:
+    """Primary-model extraction with a cross-provider fallback on transport failure.
+
+    A provider outage (timeout, 5xx, auth) should degrade to ``fallback_model`` -
+    a different provider family - not fail the job. Schema failures deliberately do
+    NOT trigger the fallback: they already get the repair loop, and a different
+    provider is no likelier to fix a prompt-shape problem. Cost-cap violations
+    always propagate (hard budget rail).
+    """
+    try:
+        content = await _call_with_repair(
+            llm, settings.primary_model, prompt, settings.max_repair_attempts, cost
+        )
+        return content, settings.primary_model
+    except (SchemaValidationError, CostCapExceeded):
+        raise
+    except Exception as exc:
+        log.warning(
+            "extraction.fallback",
+            error=str(exc)[:200],
+            primary=settings.primary_model,
+            fallback=settings.fallback_model,
+        )
+        content = await _call_with_repair(
+            llm, settings.fallback_model, prompt, settings.max_repair_attempts, cost
+        )
+        return content, settings.fallback_model
+
+
 async def extract_paper_card(
     *,
     identity: dict[str, object],
@@ -153,20 +190,35 @@ async def extract_paper_card(
         max_chars=settings.max_input_chars,
     )
 
-    model = settings.primary_model
-    content = await _call_with_repair(llm, model, prompt, settings.max_repair_attempts, cost)
+    content, model = await _extract_content(llm, prompt, settings, cost)
     dropped = _drop_unevidenced_results(content)
     conf = score_confidence(content, parse_confidence)
 
-    # Escalate once to a stronger model if confidence is low.
+    # Escalate once to a stronger model if confidence is low. Escalation is an
+    # improvement attempt over already-valid content, so any failure short of the
+    # cost cap degrades to keeping the primary extraction (flagged low-confidence)
+    # rather than failing the whole job.
     escalated = False
     if conf < settings.escalation_confidence:
         log.info("extraction.escalate", paper_id=identity.get("paper_id"), conf=conf)
-        model = settings.escalation_model
-        escalated = True
-        content = await _call_with_repair(llm, model, prompt, settings.max_repair_attempts, cost)
-        dropped += _drop_unevidenced_results(content)
-        conf = score_confidence(content, parse_confidence)
+        try:
+            escalated_content = await _call_with_repair(
+                llm, settings.escalation_model, prompt, settings.max_repair_attempts, cost
+            )
+        except CostCapExceeded:
+            raise
+        except Exception as exc:
+            log.warning(
+                "extraction.escalate_failed",
+                paper_id=identity.get("paper_id"),
+                error=str(exc)[:200],
+            )
+        else:
+            model = settings.escalation_model
+            escalated = True
+            content = escalated_content
+            dropped += _drop_unevidenced_results(content)
+            conf = score_confidence(content, parse_confidence)
 
     reasons: list[str] = []
     if conf < settings.review_confidence:
@@ -180,7 +232,12 @@ async def extract_paper_card(
         identity=identity,
         meta={
             "extraction_model": model,
-            "extraction_version": f"{settings.prompt_version}@{prompt_hash(settings.prompt_version)}",
+            # Fold the schema skeleton into the hash: a schema change alters the
+            # effective prompt, so it must alter the recorded version too.
+            "extraction_version": (
+                f"{settings.prompt_version}"
+                f"@{prompt_hash(settings.prompt_version, schema_skeleton(LLMPaperCardContent))}"
+            ),
             "confidence": conf,
             "needs_review": bool(reasons),
             "review_reasons": reasons,

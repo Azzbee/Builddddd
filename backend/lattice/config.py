@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,30 +20,29 @@ class SimilarityWeights(BaseSettings):
     ``w(i,j) = sigma(alpha*S_sem + beta*S_meth + gamma*S_cit + delta*S_data) * T(i,j)``
     """
 
-    alpha: float = 0.40  # thematic / semantic (SPECTER2)
-    beta: float = 0.25  # methodological proximity
-    gamma: float = 0.25  # citation structure
-    delta: float = 0.10  # dataset overlap
+    alpha: float = Field(default=0.40, ge=0)  # thematic / semantic (SPECTER2)
+    beta: float = Field(default=0.25, ge=0)  # methodological proximity
+    gamma: float = Field(default=0.25, ge=0)  # citation structure
+    delta: float = Field(default=0.10, ge=0)  # dataset overlap
 
-    tau: float = 0.35  # edge materialization threshold
-    knn_cap: int = 15  # max RELATED_TO edges per paper
-    candidate_k: int = 50  # ANN candidates considered per new paper
+    tau: float = Field(default=0.35, ge=0, le=1)  # edge materialization threshold
+    knn_cap: int = Field(default=15, ge=1)  # max RELATED_TO edges per paper
+    candidate_k: int = Field(default=50, ge=1)  # ANN candidates considered per new paper
 
-    recency_boost: float = 0.15  # multiplicative boost for edges < recency_days old
-    recency_days: int = 90
+    recency_boost: float = Field(default=0.15, ge=0)
+    recency_days: int = Field(default=90, ge=1)
 
-    sigmoid_gain: float = 4.0  # steepness of the squashing sigmoid
-    sigmoid_midpoint: float = 0.5  # input value mapped to 0.5 output
+    sigmoid_gain: float = Field(default=4.0, gt=0)
+    sigmoid_midpoint: float = Field(default=0.5, ge=0, le=1)
 
     # Weight of section-level methodology cosine vs Jaccard tag overlap in S_meth.
-    meth_section_weight: float = 0.6
+    meth_section_weight: float = Field(default=0.6, ge=0, le=1)
 
-    @field_validator("alpha", "beta", "gamma", "delta")
-    @classmethod
-    def _non_negative(cls, v: float) -> float:
-        if v < 0:
-            raise ValueError("similarity weights must be non-negative")
-        return v
+    @model_validator(mode="after")
+    def _positive_weight_sum(self) -> SimilarityWeights:
+        if self.alpha + self.beta + self.gamma + self.delta <= 0:
+            raise ValueError("at least one similarity weight must be positive")
+        return self
 
 
 class ExtractionSettings(BaseSettings):
@@ -51,21 +50,21 @@ class ExtractionSettings(BaseSettings):
     escalation_model: str = "claude-sonnet-4-6"
     fallback_model: str = "mistral/mistral-large-latest"
     prompt_version: str = "papercard_v1"
-    max_repair_attempts: int = 2
+    max_repair_attempts: int = Field(default=2, ge=0)
     # Below this self-reported/heuristic confidence, escalate to the stronger model.
-    escalation_confidence: float = 0.55
+    escalation_confidence: float = Field(default=0.55, ge=0, le=1)
     # Below this confidence after escalation, flag needs_review.
-    review_confidence: float = 0.40
-    max_input_chars: int = 120_000
+    review_confidence: float = Field(default=0.40, ge=0, le=1)
+    max_input_chars: int = Field(default=120_000, ge=1)
 
 
 class EmbeddingSettings(BaseSettings):
     paper_model: str = "specter2"  # citation-informed paper similarity
     chunk_model: str = "bge-m3"  # configurable: qwen3-embedding, voyage-3, ...
-    paper_dim: int = 768
-    chunk_dim: int = 1024
+    paper_dim: int = Field(default=768, ge=1)
+    chunk_dim: int = Field(default=1024, ge=1)
     prefer_s2_precomputed: bool = True  # use Semantic Scholar SPECTER2 if available
-    batch_size: int = 16
+    batch_size: int = Field(default=16, ge=1)
     #: How to embed. "auto" -> real local models in prod, hashing in demo/dev/test;
     #: "local" forces real sentence-transformers anywhere; "hashing" forces the
     #: dependency-free fallback. Local load failures degrade to hashing, never crash.
@@ -77,18 +76,21 @@ class EmbeddingSettings(BaseSettings):
 
 class GrobidSettings(BaseSettings):
     url: str = "http://grobid:8070"
-    timeout_s: float = 120.0
-    consolidate_citations: int = 1
-    consolidate_header: int = 1
+    timeout_s: float = Field(default=120.0, gt=0)
+    consolidate_citations: int = Field(default=1, ge=0, le=2)
+    consolidate_header: int = Field(default=1, ge=0, le=2)
     #: TEI elements to annotate with page coordinates (enables PDF page deep-links).
     tei_coordinates: str = "head,p,persName,figure,biblStruct,formula"
 
 
 class DoclingSettings(BaseSettings):
     enabled: bool = True
-    table_min_confidence: float = 0.5
+    table_min_confidence: float = Field(default=0.5, ge=0, le=1)
     # Token-overlap agreement above which GROBID/Docling regions are auto-accepted.
-    reconcile_threshold: float = 0.9
+    reconcile_threshold: float = Field(default=0.9, ge=0, le=1)
+    vision_enabled: bool = True
+    vision_model: str = "claude-sonnet-4-6"
+    vision_timeout_s: float = Field(default=120.0, gt=0)
 
 
 class Neo4jSettings(BaseSettings):
@@ -100,8 +102,14 @@ class Neo4jSettings(BaseSettings):
 
 class PostgresSettings(BaseSettings):
     dsn: str = "postgresql://lattice:lattice@postgres:5432/lattice"
-    pool_min: int = 1
-    pool_max: int = 10
+    pool_min: int = Field(default=1, ge=1)
+    pool_max: int = Field(default=10, ge=1)
+
+    @model_validator(mode="after")
+    def _ordered_pool_limits(self) -> PostgresSettings:
+        if self.pool_max < self.pool_min:
+            raise ValueError("Postgres pool_max must be greater than or equal to pool_min")
+        return self
 
 
 class RedisSettings(BaseSettings):
@@ -115,30 +123,30 @@ class EnrichmentSettings(BaseSettings):
     openalex_mailto: str = "adamzeraiki@gmail.com"  # polite-pool access
     crossref_base_url: str = "https://api.crossref.org"
     arxiv_base_url: str = "http://export.arxiv.org/api/query"
-    cache_ttl_s: int = 60 * 60 * 24 * 7
-    max_retries: int = 4
-    backoff_base_s: float = 1.0
+    cache_ttl_s: int = Field(default=60 * 60 * 24 * 7, ge=0)
+    max_retries: int = Field(default=4, ge=0)
+    backoff_base_s: float = Field(default=1.0, gt=0)
 
 
 class RagSettings(BaseSettings):
     agent_model: str = "claude-sonnet-4-6"
     router_model: str = "claude-haiku-4-5-20251001"
-    max_tool_calls: int = 8
-    low_confidence_floor: float = 0.35  # below this the agent answers "I don't know"
-    hybrid_vector_weight: float = 0.6  # vs BM25 in hybrid retrieval fusion
-    top_k_chunks: int = 12
+    max_tool_calls: int = Field(default=8, ge=1)
+    low_confidence_floor: float = Field(default=0.35, ge=0, le=1)
+    hybrid_vector_weight: float = Field(default=0.6, ge=0, le=1)
+    top_k_chunks: int = Field(default=12, ge=1)
 
 
 class CostSettings(BaseSettings):
-    per_job_usd_cap: float = 1.00
-    daily_usd_cap: float = 50.00
-    target_per_paper_usd: float = 0.15
+    per_job_usd_cap: float = Field(default=1.00, ge=0)
+    daily_usd_cap: float = Field(default=50.00, ge=0)
+    target_per_paper_usd: float = Field(default=0.15, ge=0)
 
 
 class WatcherSettings(BaseSettings):
     arxiv_categories: list[str] = Field(default_factory=lambda: ["q-fin.ST", "cs.LG", "econ.EM"])
-    similarity_floor: float = 0.45  # min similarity-to-corpus to enqueue for approval
-    poll_interval_s: int = 60 * 60 * 6
+    similarity_floor: float = Field(default=0.45, ge=0, le=1)
+    poll_interval_s: int = Field(default=60 * 60 * 6, gt=0)
 
 
 class Settings(BaseSettings):
@@ -156,12 +164,20 @@ class Settings(BaseSettings):
     demo_mode: bool = False  # offline demo corpus + deterministic models at startup
     persistent: bool = False  # wire Postgres + Neo4j backends instead of in-memory
     workspace_id: str = "default"  # multi-tenant ready: every row carries this
+    max_workspaces: int = Field(default=32, ge=1)
     log_level: str = "INFO"
     log_json: bool = True
     data_dir: str = "/data"
     auth_token: str | None = None  # single-user bearer token
-    rate_limit_per_min: int = 240  # per-client request cap; 0 disables
-    max_upload_mb: int = 50  # reject PDF uploads larger than this
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    rate_limit_per_min: int = Field(default=240, ge=0)
+    max_upload_mb: int = Field(default=50, ge=1)
+    ingest_max_attempts: int = Field(default=3, ge=1)
+    readiness_timeout_s: float = Field(default=2.0, gt=0)
+    #: Judge a new paper's claims against existing same-concept claims at ingest
+    #: time (offline heuristic judge), so contradictions surface as papers arrive.
+    #: The /contradictions/analyze endpoint remains for full-corpus (LLM) passes.
+    incremental_contradictions: bool = True
 
     similarity: SimilarityWeights = Field(default_factory=SimilarityWeights)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
@@ -175,6 +191,30 @@ class Settings(BaseSettings):
     rag: RagSettings = Field(default_factory=RagSettings)
     cost: CostSettings = Field(default_factory=CostSettings)
     watcher: WatcherSettings = Field(default_factory=WatcherSettings)
+
+    @field_validator("workspace_id")
+    @classmethod
+    def _valid_default_workspace(cls, value: str) -> str:
+        return validate_workspace_id(value)
+
+    @model_validator(mode="after")
+    def _production_guards(self) -> Settings:
+        if self.environment == "prod" and not self.auth_token:
+            raise ValueError("LATTICE_AUTH_TOKEN is required in production")
+        if self.environment == "prod" and "*" in self.cors_origins:
+            raise ValueError("wildcard CORS is not allowed in production")
+        return self
+
+
+def validate_workspace_id(value: str) -> str:
+    """Validate the workspace identifier used in headers and datastore scopes."""
+    import re
+
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", value):
+        raise ValueError(
+            "workspace id must be 1-64 characters using letters, numbers, dot, underscore, or hyphen"
+        )
+    return value
 
 
 @lru_cache(maxsize=1)

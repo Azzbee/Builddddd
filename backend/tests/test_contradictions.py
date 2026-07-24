@@ -126,3 +126,42 @@ async def test_writer_rejects_unknown_relation() -> None:
     writer = GraphWriter(FakeGraphStore(), "ws1")
     with pytest.raises(ValueError):
         await writer.upsert_claim_relation("c1", "c2", "DROP", 0.8)
+
+
+# ------------------------------------------------------------- incremental path
+def test_candidate_pairs_for_only_pairs_new_against_existing() -> None:
+    from lattice.graph.contradictions import candidate_pairs_for
+
+    new = [_claim("n1", "pNew", "LSTM improves accuracy", "forecasting")]
+    existing = [
+        _claim("e1", "pOld", "LSTM shows no improvement", "forecasting"),
+        _claim("e2", "pOld", "GRU is fast", "architecture"),  # different concept
+        _claim("e3", "pNew", "own claim", "forecasting"),  # same paper: excluded
+    ]
+    pairs = candidate_pairs_for(new, existing)
+    assert [(a.claim_id, b.claim_id) for a, b in pairs] == [("n1", "e1")]
+
+
+async def test_detect_relations_for_flags_contradiction() -> None:
+    from lattice.graph.contradictions import detect_relations_for
+
+    new = [
+        _claim(
+            "n1",
+            "pNew",
+            "LSTM significantly improves forecasting accuracy over ARIMA",
+            "forecasting",
+        )
+    ]
+    existing = [
+        _claim(
+            "e1",
+            "pOld",
+            "LSTM shows no improvement in forecasting accuracy over ARIMA",
+            "forecasting",
+        )
+    ]
+    report = await detect_relations_for(new, existing, HeuristicNLIJudge())
+    assert len(report.contradictions) == 1
+    edge = report.contradictions[0]
+    assert edge.source_paper == "pNew" and edge.target_paper == "pOld"

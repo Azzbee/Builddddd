@@ -28,9 +28,12 @@ export default function RelatedWorkPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {/* API responses are file downloads, not client-routed pages. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a className="btn" href="/api/export/bibtex">
             Download .bib
           </a>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a className="btn" href="/api/export/obsidian">
             Obsidian .zip
           </a>
@@ -42,11 +45,15 @@ export default function RelatedWorkPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="card">
           <h2 className="mb-2 text-sm font-semibold text-white">Draft</h2>
-          <pre className="whitespace-pre-wrap font-sans text-sm text-ink">{markdown || "Ingest papers first."}</pre>
+          <pre className="whitespace-pre-wrap font-sans text-sm text-ink">
+            {markdown || "Ingest papers first."}
+          </pre>
         </section>
         <section className="card">
           <h2 className="mb-2 text-sm font-semibold text-white">BibTeX</h2>
-          <pre className="overflow-auto font-mono text-xs text-muted">{bibtex || "(empty)"}</pre>
+          <pre className="overflow-auto font-mono text-xs text-muted">
+            {bibtex || "(empty)"}
+          </pre>
         </section>
       </div>
     </div>

@@ -9,7 +9,7 @@ field: paper-level cards, weighted relationships, and an agent that can answer
 *"which methods have been tried for X, what data did they use, and where do they
 disagree?"*
 
-Lattice ingests scientific papers (PDF, arXiv id, or DOI), extracts their
+Lattice ingests scientific papers from a PDF or arXiv id, extracts their
 intellectual skeleton (problem, methodology, datasets, results, limitations,
 contributions) into structured **PaperCards**, and assembles them into a
 weighted, **bi-temporal** knowledge graph that updates incrementally as new
@@ -26,12 +26,12 @@ resumable, and idempotent.
 | Concern | Decision | Rationale |
 | --- | --- | --- |
 | PDF structure | **GROBID** | Production standard for scholarly metadata + references |
-| Tables / formulas / figures | **Docling** region router + vision fallback | GROBID is weak on tables/formulas; route per region type |
+| Tables and complex layout | **Docling** reconciliation + vision fallback | GROBID is weak on layout; compare section text and arbitrate disagreements |
 | Paper similarity | **SPECTER2** (S2 precomputed first) | Citation-informed, best quality-per-compute |
 | Aspect similarity | **PaperCard field embeddings** (bge-m3) | Sidesteps SPECTER2 domain bias; feeds the weight function |
 | Graph | **Custom typed schema in Neo4j** | Owning the ontology is the product |
 | Retrieval | **LightRAG-style dual-level** | Low-level facts + high-level synthesis, incremental |
-| Evolution | **Graphiti-style bi-temporal edges** | Supersede, never delete; O(k) per new paper |
+| Evolution | **Graphiti-style bi-temporal edges** | Supersede + invalidate (`invalid_at`), never delete; O(k) per new paper |
 | Enrichment | **Semantic Scholar + OpenAlex + Crossref** | Citation structure without perfect reference parsing |
 
 Full reasoning lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -51,8 +51,8 @@ is silently overwritten. The full math, calibration, and tuning story is in
 ## Architecture
 
 ```
-Next.js Web App  ──REST+SSE──>  FastAPI Backend
-                                   │
+Browser  ──same-origin /api──>  Next.js Server  ──REST+SSE──>  FastAPI Backend
+                                                               │
         ┌──────────────┬──────────┴───────────┐
    Ingestion        Graph Core            Agentic RAG
    Workers (arq)     (Neo4j)               Service
@@ -81,7 +81,7 @@ lattice/
 │       ├── landscape/      # gap matrix, epistemic quadrants, momentum
 │       ├── digest/         # weekly delta report
 │       └── eval/           # extraction / retrieval / edge-quality harnesses + golden set
-├── web/                    # Next.js 15 (App Router), TypeScript, Tailwind, shadcn/ui
+├── web/                    # Next.js 15 (App Router), TypeScript, Tailwind
 └── docs/                   # ARCHITECTURE, SIMILARITY, RUNBOOK
 ```
 
@@ -103,6 +103,10 @@ make seed                   # pull 20 arXiv commodity-forecasting papers
 make ingest FILE=paper.pdf  # ingest a local PDF
 ```
 
+The persistent API stages each PDF and returns a queued job before arq starts
+work. The Next.js server adds the production bearer token to browser requests;
+the token never enters client-side code.
+
 There is also a CLI (installed as `lattice`):
 
 ```bash
@@ -118,6 +122,7 @@ Develop and test the backend without any services:
 cd backend
 uv sync --extra dev
 uv run pytest               # offline test suite
+uv run ruff format --check .
 uv run ruff check . && uv run mypy lattice
 ```
 
@@ -125,7 +130,9 @@ uv run ruff check . && uv run mypy lattice
 
 All eight PRD "extras" are built, not just stubbed:
 
-1. **Contradiction & convergence detection** - claim-level NLI surfaces where the
+1. **Contradiction & convergence detection** - claim-level relation classification, run incrementally
+   at ingest so disagreements surface as papers arrive, plus a full-corpus LLM
+   pass on demand. Surfaces where the
    corpus disagrees, as first-class `CONTRADICTS`/`SUPPORTS`/`EXTENDS` edges.
 2. **Landscape Intelligence** - gap matrix (Empty vs Blind-spot via OpenAlex global
    counts), epistemic quadrants, and momentum scorecards.
@@ -169,7 +176,11 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 318 tests run fully offline; `mypy --strict` and `ruff` clean; ~92% coverage.
+- Backend: 416 tests pass offline; four live integration modules skip without
+  service DSNs; `mypy --strict`, Ruff lint, and Ruff format checks are clean.
+- Preprint -> published **supersession** is wired end-to-end (SUPERSEDED_BY edge,
+  bi-temporal edge invalidation, out of analytics and the candidate pool), and
+  extraction has a **cross-provider fallback** for provider outages.
 - Embeddings: real `sentence-transformers` (bge-m3 + SPECTER) wire in automatically in
   prod (`LATTICE_ENVIRONMENT=prod`) or via `LATTICE_EMBEDDING__BACKEND=local`; the
   hashing fallback keeps demo/dev/CI offline and fast. Load failures degrade, never crash.
@@ -177,7 +188,9 @@ eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,
   bi-temporal edges, claim relations, and the Neo4j read paths) on every push.
-- Web app builds clean (15 routes). Static SQL is parsed/validated with sqlglot.
+- Web app has 17 application routes and passes Prettier, ESLint, Vitest,
+  TypeScript, the production build, and `npm audit` with zero reported
+  vulnerabilities. Static SQL is parsed and validated with sqlglot.
 - Offline demo mode (`make demo`) loads a populated graph with zero external
   services.
 

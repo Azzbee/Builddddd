@@ -122,11 +122,19 @@ def test_composite_weight_full_anatomy() -> None:
     w = SimilarityWeights()
     v = np.array([1.0, 0.0])
     i = PaperFeatures(
-        "i", specter=v, methodology_embedding=v, methods={"lstm"}, datasets={"lme"},
+        "i",
+        specter=v,
+        methodology_embedding=v,
+        methods={"lstm"},
+        datasets={"lme"},
         references={"r1", "r2"},
     )
     j = PaperFeatures(
-        "j", specter=v, methodology_embedding=v, methods={"lstm"}, datasets={"lme"},
+        "j",
+        specter=v,
+        methodology_embedding=v,
+        methods={"lstm"},
+        datasets={"lme"},
         references={"r1", "r3"},
     )
     res = composite_weight(i, j, w, CosineCalibrator())

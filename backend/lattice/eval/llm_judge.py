@@ -159,8 +159,10 @@ class LLMJudge:
 
 
 def _clamp(value: object) -> float:
+    if not isinstance(value, int | float | str):
+        return 0.0
     try:
-        return max(0.0, min(1.0, float(value)))  # type: ignore[arg-type]
+        return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError):
         return 0.0
 
@@ -264,9 +266,7 @@ async def evaluate_rag_judged(
         ctx = contexts[i] if contexts is not None else _contexts_from_result(res)
         cite = citation_correctness(res, qa.relevant_paper_ids)
         if res.abstained:
-            items.append(
-                JudgedItem(qa.question, 1.0, 0.0, 0.0, 0.0, cite, abstained=True)
-            )
+            items.append(JudgedItem(qa.question, 1.0, 0.0, 0.0, 0.0, cite, abstained=True))
             continue
         faith = await judge.faithfulness(res.answer, ctx)
         rel = await judge.answer_relevance(qa.question, res.answer)
@@ -274,7 +274,12 @@ async def evaluate_rag_judged(
         corr = await judge.answer_correctness(res.answer, qa.gold_answer)
         items.append(
             JudgedItem(
-                qa.question, faith.score, rel.score, prec.score, corr.score, cite,
+                qa.question,
+                faith.score,
+                rel.score,
+                prec.score,
+                corr.score,
+                cite,
                 abstained=False,
             )
         )

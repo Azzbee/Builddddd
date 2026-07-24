@@ -47,9 +47,13 @@ async def store():  # type: ignore[no-untyped-def]
 
 def _card(pid: str, title: str) -> PaperCard:
     return PaperCard(
-        paper_id=pid, title=title, year=2024,
-        methodology=Methodology(approach_summary="LSTM"), paper_type=PaperType.EMPIRICAL,
-        domains=["commodity markets"], methods_taxonomy=["LSTM"],
+        paper_id=pid,
+        title=title,
+        year=2024,
+        methodology=Methodology(approach_summary="LSTM"),
+        paper_type=PaperType.EMPIRICAL,
+        domains=["commodity markets"],
+        methods_taxonomy=["LSTM"],
     )
 
 
@@ -69,13 +73,41 @@ async def test_related_edge_roundtrip(store) -> None:  # type: ignore[no-untyped
     await writer.upsert_paper(_card("p2", "B"))
     feats_a = PaperFeatures("p1", specter=np.array([1.0, 0.0]), methods={"lstm"})
     edges = compute_related_edges(
-        feats_a, [PaperFeatures("p2", specter=np.array([1.0, 0.0]), methods={"lstm"})],
-        SimilarityWeights(), CosineCalibrator(),
+        feats_a,
+        [PaperFeatures("p2", specter=np.array([1.0, 0.0]), methods={"lstm"})],
+        SimilarityWeights(),
+        CosineCalibrator(),
     )
     assert edges
     await writer.upsert_related_edge(edges[0])
     weights = await writer.existing_related_weights("p1")
     assert "p2" in weights and weights["p2"] > 0
+
+
+async def test_audit_write_is_idempotent_on_replay(store) -> None:  # type: ignore[no-untyped-def]
+    writer = GraphWriter(store, "itest")
+    entry = {
+        "src": "p1",
+        "dst": "p2",
+        "old": 0.4,
+        "new": 0.6,
+        "reason": "ingest",
+        "at": "2024-01-01",
+    }
+    await writer.write_audit([entry])
+    await writer.write_audit([entry])  # replay (resume/retry) must NOT duplicate
+    rows = await store.execute(
+        "MATCH (a:EdgeAudit {workspace_id:'itest', source_id:'p1', target_id:'p2'}) "
+        "RETURN count(a) AS n"
+    )
+    assert rows[0]["n"] == 1
+    # A genuine weight change (different new_weight) still records a new row.
+    await writer.write_audit([{**entry, "new": 0.8}])
+    rows2 = await store.execute(
+        "MATCH (a:EdgeAudit {workspace_id:'itest', source_id:'p1', target_id:'p2'}) "
+        "RETURN count(a) AS n"
+    )
+    assert rows2[0]["n"] == 2
 
 
 async def test_claim_relation_and_entities(store) -> None:  # type: ignore[no-untyped-def]
@@ -94,3 +126,46 @@ async def test_claim_relation_and_entities(store) -> None:  # type: ignore[no-un
         "MATCH (:Paper {workspace_id:'itest', id:'p1'})-[:USES_METHOD]->(m:Method) RETURN m.name AS name"
     )
     assert methods[0]["name"] == "LSTM"
+
+
+async def test_supersession_invalidates_edges_both_directions(store) -> None:  # type: ignore[no-untyped-def]
+    writer = GraphWriter(store, "itest")
+    for pid, title in (("pre", "Preprint"), ("pub", "Published"), ("x", "Other")):
+        await writer.upsert_paper(_card(pid, title))
+    feats = {
+        pid: PaperFeatures(pid, specter=np.array([1.0, 0.0]), methods={"lstm"})
+        for pid in ("pre", "pub", "x")
+    }
+    w = SimilarityWeights()
+    cal = CosineCalibrator()
+    # pre -> x (outgoing) and x -> pre (incoming): both must be invalidated.
+    for src, dst in (("pre", "x"), ("x", "pre")):
+        edges = compute_related_edges(feats[src], [feats[dst]], w, cal)
+        assert edges
+        await writer.upsert_related_edge(edges[0])
+
+    await writer.set_superseded("pre", "pub")
+    await writer.invalidate_related_edges_of("pre", reason="superseded_by:pub")
+
+    live = await store.execute(
+        "MATCH (:Paper {workspace_id:'itest'})-[r:RELATED_TO]->(:Paper) "
+        "WHERE r.invalid_at IS NULL RETURN count(r) AS n"
+    )
+    assert live[0]["n"] == 0, "every live edge touching the superseded paper is invalidated"
+    total = await store.execute(
+        "MATCH (:Paper {workspace_id:'itest'})-[r:RELATED_TO]->(:Paper) RETURN count(r) AS n"
+    )
+    assert total[0]["n"] == 2, "invalidated, never deleted"
+    sup = await store.execute(
+        "MATCH (:Paper {workspace_id:'itest', id:'pre'})-[r:SUPERSEDED_BY]->"
+        "(:Paper {workspace_id:'itest', id:'pub'}) RETURN count(r) AS n"
+    )
+    assert sup[0]["n"] == 1
+
+    # Backend parity: the Neo4j reader hides superseded papers from the default
+    # snapshot, exactly like the in-memory _active_cards path.
+    from lattice.graph.reader import Neo4jGraphReader
+
+    snap = await Neo4jGraphReader(store).snapshot("itest")
+    ids = {n.id for n in snap.nodes}
+    assert "pre" not in ids and {"pub", "x"} <= ids

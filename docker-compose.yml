@@ -50,7 +50,11 @@ services:
     ports:
       - "8070:8070"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8070/api/isalive || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8070; printf \"GET /api/isalive HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'",
+        ]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -60,7 +64,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: uvicorn lattice.api.app:app --host 0.0.0.0 --port 8000
-    env_file: .env
+    env_file: ${LATTICE_ENV_FILE:-.env}
     environment:
       LATTICE_PERSISTENT: "true"  # the full stack has Postgres + Neo4j available
     ports:
@@ -76,7 +80,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: arq lattice.worker.WorkerSettings
-    env_file: .env
+    env_file: ${LATTICE_ENV_FILE:-.env}
     environment:
       LATTICE_PERSISTENT: "true"
     depends_on:
@@ -89,7 +93,9 @@ services:
       context: ./web
       dockerfile: Dockerfile
     environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:8000
+      LATTICE_API_BASE: http://api:8000
+      LATTICE_AUTH_TOKEN: ${LATTICE_AUTH_TOKEN:-}
+      LATTICE_PROXY_MAX_BODY_MB: ${LATTICE_PROXY_MAX_BODY_MB:-52}
     ports:
       - "3000:3000"
     depends_on:

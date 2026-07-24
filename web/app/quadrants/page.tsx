@@ -14,13 +14,18 @@ export default function QuadrantsPage() {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    api.quadrants().then(setData).catch((e) => setError(String(e)));
+    api
+      .quadrants()
+      .then(setData)
+      .catch((e) => setError(String(e)));
   }, []);
 
   return (
     <div className="space-y-4">
       <header>
-        <h1 className="text-xl font-semibold text-white">Epistemic quadrants</h1>
+        <h1 className="text-xl font-semibold text-white">
+          Epistemic quadrants
+        </h1>
         <p className="text-sm text-muted">
           Each quadrant is a computable query, not a vibe. Unknown unknowns are
           surfaced as proxies in the gap matrix.
@@ -30,12 +35,16 @@ export default function QuadrantsPage() {
       {error && <div className="card border-bad text-bad">{error}</div>}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Quadrant title="Known knowns" hint="independently supported, non-contradicted">
+        <Quadrant
+          title="Known knowns"
+          hint="independently supported, non-contradicted"
+        >
           {(data?.known_knowns ?? []).map((f, i) => (
             <li key={i} className="text-sm">
               <span className="text-ink">{String(f.claim)}</span>
               <span className="ml-1 text-xs text-muted">
-                ({String(f.independent_supports)} supports{f.triangulated ? ", triangulated" : ""})
+                ({String(f.independent_supports)} supports
+                {f.triangulated ? ", triangulated" : ""})
               </span>
             </li>
           ))}
@@ -55,7 +64,8 @@ export default function QuadrantsPage() {
             <li key={i} className="text-sm">
               <span className="text-ink">{String(t.method)}</span>
               <span className="ml-1 text-xs text-muted">
-                (sim {Number(t.similarity).toFixed(2)}, distance {String(t.graph_distance)})
+                (sim {Number(t.similarity).toFixed(2)}, distance{" "}
+                {String(t.graph_distance)})
               </span>
             </li>
           ))}

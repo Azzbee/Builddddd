@@ -7,7 +7,11 @@ export const metadata: Metadata = {
   description: "A living knowledge graph for scientific literature.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body className="min-h-screen">

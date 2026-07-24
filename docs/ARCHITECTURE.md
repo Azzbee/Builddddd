@@ -20,23 +20,55 @@ Next.js Web App  ──REST + SSE──>  FastAPI Backend
 
 ## Data flow (ingestion)
 
-A PDF (or arXiv id / DOI) moves through a resumable state machine
+A PDF (uploaded directly or fetched from an arXiv id) moves through a resumable state machine
 (`ingestion/pipeline.py`, wired by `ingestion/service.py`). `job.stage` is always
 the last *completed* stage, so a crash resumes exactly where it stopped. Linking
-is the final, transactional stage, so a crash never leaves a partial paper in the
-graph.
+is the final stage. Its cross-store writes are idempotent rather than one database
+transaction, so rerunning a partially completed link converges without duplicate
+graph records.
+
+In persistent mode, the API first writes the job, source PDF, and serialized
+stage context to `ingest_jobs` and `ingest_artifacts`. Only the workspace and job
+IDs enter Redis. An arq worker rebuilds the workspace container, hydrates linking
+state from PostgreSQL, loads the artifact, and resumes after the last completed
+stage. A retry uses the same artifact and never uploads a large payload to Redis.
+The persisted `retryable` flag comes from the typed pipeline error, so malformed
+or scanned PDFs cannot consume worker attempts while timeouts and paused jobs can
+resume. Retryable worker failures use arq's deferred retry with exponential delay
+until `LATTICE_INGEST_MAX_ATTEMPTS` is reached.
 
 1. **PARSING** - `classify_pdf` rejects corrupted/scanned/paywalled inputs into
    typed, actionable error states. GROBID extracts structure, metadata, and
-   references (`grobid_client.parse_tei`, a pure function). Docling handles
-   tables/figures and reconciles regions by token overlap, attaching a
-   `parse_confidence`; low-confidence pages escalate to a vision LLM. Dedup
+   references (`grobid_client.parse_tei`, a pure function). Docling processes
+   the PDF once, contributes Markdown sections and tables, and reconciles each
+  matching section by token overlap. The selected text receives a
+  `parse_confidence`; disputed sections can escalate to a vision LLM using a
+  rendered image of the source page. DOI metadata extracted from the PDF is used
+  for identity, enrichment, and deduplication, but DOI URLs are not acquisition
+  endpoints. Dedup
    (content hash / DOI / arXiv / fuzzy title+author) makes re-ingestion a no-op.
 2. **EXTRACTING** - the LLM fills a `PaperCard` via structured output with a
    validate-and-repair loop. Confidence blends the model's self-report,
    extraction completeness, and parse confidence; low confidence escalates to a
    stronger model once, then flags `needs_review`. Results lacking an
    `evidence_location` are dropped (anti-hallucination).
+
+   The extraction boundary is designed for weak or cheap models (small
+   local models via `ollama/...`, budget hosted tiers), each measure driven by a
+   failure observed live from a local 7B model:
+   - The prompt embeds a JSON skeleton *generated from the pydantic model*
+     (`extraction/skeleton.py`), so weak models see the exact shape instead of a
+     prose description, and the prompt can never drift from the validator. The
+     skeleton is folded into `extraction_version`'s hash, so a schema change is
+     visible as a version change for re-extraction backfills.
+   - `LLMResponse.json()` salvages fenced and prose-wrapped JSON before giving up.
+   - LLM-facing models inherit `LLMTolerantModel`: null-for-empty means absent,
+     bare scalars wrap into lists, unknown keys are ignored, degenerate list
+     entries (all-null datasets/results) are dropped, and `paper_type` is
+     case-insensitive. Required-field omissions still fail loudly into the repair
+     loop, and the internal `PaperCard` stays `extra="forbid"`. Net effect: fewer
+     repair round-trips and escalations, which is also what keeps per-paper cost
+     down on hosted models.
 3. **ENRICHING** - Semantic Scholar / OpenAlex / Crossref add ids, citation
    counts, references, concepts, and (free) precomputed SPECTER2 vectors.
    Best-effort: failures degrade to text-only similarity.
@@ -44,8 +76,38 @@ graph.
    (problem / methodology / results), and section-anchored chunk vectors into the
    vector store.
 5. **LINKING** - candidate generation (ANN), composite similarity, entity
-   resolution, idempotent graph writes, edge audit, citation edges. The paper is
-   now live in the graph.
+   resolution, idempotent graph writes, edge audit, citation edges, version
+   supersession, and incremental claim relations. The paper is now live in the
+   graph, with any contradictions it introduces already surfaced.
+
+Three living-graph behaviors happen inside linking:
+
+- **Incremental linking** keeps a per-paper feature pool (SPECTER + aspect
+  vectors, method and dataset sets) and the entity-resolver registries in memory
+  for O(k)-per-paper linking; the calibrator refit is bounded (a deterministic
+  subsample of vectors), so per-ingest cost stays flat as the corpus grows.
+  Because in-memory state is lost on restart, the persistent path stores the
+  SPECTER vector (`papers.specter`) and the aspect vectors (`papers.aspects`) and
+  rehydrates the pool + resolver registries once, before the first ingest of a
+  process (`IngestionService.hydrate`). Rehydrated papers link at full similarity
+  fidelity: SPECTER (sem), methodology-section vectors (meth), method tags,
+  datasets, citation reference sets (`papers.reference_ids`, for bibliographic
+  coupling), and each paper's own external ids (DOI / arXiv / S2 / OpenAlex, for
+  direct-citation detection) all persist and restore. Nothing degrades on restart.
+- **Version supersession.** A title-level dedup match with a preprint<->published
+  identifier asymmetry (arXiv-only vs DOI-bearing) is a new *version*, not a
+  duplicate: the published version ingests, a `SUPERSEDED_BY` edge records the
+  succession, every `RELATED_TO` edge touching the preprint is invalidated (both
+  directions, `invalid_at` set - never deleted), and the preprint leaves the
+  candidate pool, rehydration, analytics, and default views via the
+  `_active_cards()` seam so the same work is never counted twice. It remains
+  retrievable by id. An outdated preprint arriving after its published version is
+  rejected with a precise reason.
+- **Incremental contradiction detection.** The new paper's claims are judged
+  against existing same-concept claims (offline heuristic NLI, O(new x
+  same-concept)), so SUPPORTS/CONTRADICTS/EXTENDS edges accumulate as papers
+  arrive. `POST /contradictions/analyze` remains for full-corpus passes with the
+  LLM judge. Toggle: `LATTICE_INCREMENTAL_CONTRADICTIONS`.
 
 ## Component decisions
 
@@ -61,7 +123,7 @@ graph.
   weighted greedy modularity (`graph/community.py`), not connected components, so a
   connected graph still resolves into real sub-communities. The persistent path uses
   Neo4j GDS Louvain. Cross-community claim clustering is polarity-aware (a claim and
-  its negation never merge), and the heuristic NLI requires genuine subject overlap
+  its negation never merge), and the heuristic classifier requires genuine subject overlap
   (0.5) before a polarity clash counts as a contradiction - both prevent the
   false-positive contradictions that otherwise suppress known-knowns.
 - **Best-effort signals are time-boxed.** The OpenAlex global-gap signal runs under a
@@ -72,8 +134,8 @@ graph.
   PaperCard fields to sidestep SPECTER2's domain bias and feed `S_meth`; chunk
   embeddings for hybrid retrieval. A deterministic `HashingEmbedder` is the
   offline fallback so the system always runs.
-- **Custom typed graph in Neo4j.** Owning the ontology (Paper, Author, Method,
-  Dataset, Concept, Claim, OpenProblem, Formula) is the product. We borrow
+- **Custom typed graph in Neo4j.** The persisted ontology contains Paper, Author,
+  Method, Dataset, Concept, and Claim nodes. We borrow
   LightRAG's dual-level retrieval and Graphiti's bi-temporal edges as *patterns*,
   not dependencies.
 - **Provider-agnostic LLM access** via a thin `LLMClient` (LiteLLM in prod),
@@ -88,7 +150,7 @@ graph.
 | `extraction` | PaperCard schema, versioned prompts, validate-and-repair extractor |
 | `enrichment` | cached/back-off S2/OpenAlex/Crossref/arXiv clients |
 | `embeddings` | SPECTER2, chunk + aspect embedders, hashing fallback |
-| `graph` | schema/constraints, similarity (core IP), evolution, entity resolution, writer, analytics, store, contradictions (NLI), lineage |
+| `graph` | schema/constraints, similarity, evolution, entity resolution, writer, analytics, store, claim relations, lineage |
 | `rag` | router, typed tools, ReAct agent (SSE), cited synthesis, related-work generator |
 | `landscape` | gap matrix, epistemic quadrants, momentum, global/demand signals, reading queue |
 | `export` | Obsidian/Markdown notes (BibTeX lives in `rag.related_work`) |
@@ -103,8 +165,9 @@ graph.
 
 - **Neo4j 5 + GDS**: the typed graph; PageRank/Louvain/betweenness write back onto
   nodes for the explorer.
-- **Postgres 16 + pgvector**: papers, chunks + embeddings, ingest job state, edge
-  audit, watch subscriptions/queue, digests. Supabase-compatible (`db/schema.sql`).
+- **Postgres 16 + pgvector**: papers, chunks and embeddings, ingest job state,
+  staged ingest artifacts, source PDFs, edge audit, watch queues, and digests.
+  Supabase-compatible (`db/schema.sql`).
 - **Redis**: arq task queue and enrichment cache.
 
 ### In-memory vs persistent backends
@@ -113,12 +176,22 @@ Every store sits behind a protocol with two implementations: an in-memory one
 (default; powers demo mode, dev, and the offline test suite) and a
 Postgres/Neo4j-backed one. Set `LATTICE_PERSISTENT=true` (docker-compose does this
 for the `api` and `worker`) to wire `PgVectorStore`, `PgCardStore`, `PgJobStore`,
-the `Neo4jGraphStore`, and a `Neo4jGraphReader`. Because the API and worker are
-separate processes, the persistent read paths query the live graph via the reader
-(`graph/reader.py`) rather than any in-process mirror, so reads are cross-process
-correct. The shared pool and driver are created once at startup
-(`deps.init_persistence`). All persistent code is verified live in CI against real
-service containers.
+`PgIngestArtifactStore`, `Neo4jGraphStore`, and `Neo4jGraphReader`. The API uses
+`ArqIngestionDispatcher` only when persistent Redis is available; development and
+demo containers use the inline dispatcher. Because the API and worker are
+separate processes, persistent reads query the live graph via `graph/reader.py`
+instead of an in-process mirror. The shared pool, graph driver, and Redis client
+are created once at startup in `deps.init_persistence`. Live integration tests
+exercise the datastore implementations against PostgreSQL and Neo4j in CI.
+
+## Web authentication boundary
+
+Browser code calls the same-origin Next.js `/api/[...path]` route. That route
+forwards method, query, body, content type, and workspace headers to FastAPI. It
+removes any browser-supplied authorization header and injects
+`LATTICE_AUTH_TOKEN` from the Next.js server environment. Direct FastAPI clients
+still send the bearer token themselves. This keeps the production secret out of
+JavaScript bundles, browser storage, URLs, and public environment variables.
 
 ## Agentic RAG
 
@@ -188,7 +261,8 @@ giving the reader and chat a precise deep-link target.
 ## Non-functional guarantees
 
 - **Idempotency**: content-hash + DOI dedup; every graph write is a MERGE.
-- **Resumability**: persisted job stage; linking is the final transaction.
+- **Resumability**: persisted stage context and source PDF; queue messages contain
+  identifiers only; linking is final and idempotent across stores.
 - **Type safety**: mypy strict (backend), Pydantic at every boundary.
 - **Prompt versioning**: prompts are hashed files; cards record their version.
 - **Cost ceilings**: per-job and daily caps; jobs pause (not fail) at the cap.

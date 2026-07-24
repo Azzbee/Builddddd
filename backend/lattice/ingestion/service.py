@@ -3,12 +3,17 @@
 This is where M1-M4 come together. Each stage handler is a method that reads and
 populates the shared PipelineContext. All collaborators are injected (parser, LLM,
 enrichment, embedders, stores, graph writer), so the entire pipeline runs and is
-tested offline with in-memory stores and a scripted model. Linking is the final,
-transactional stage: a crash before it leaves no partial paper in the graph.
+tested offline with in-memory stores and a scripted model. Linking is the final
+stage and touches the graph last, so a crash before it leaves no paper in the
+graph at all; its writes are idempotent MERGEs (nodes, edges, and the audit trail),
+so a crash partway through linking self-heals on re-run rather than duplicating.
+Note: linking spans two stores (graph + card/blob) and is not a single ACID
+transaction, so the self-healing relies on that idempotency, not on rollback.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,7 +26,11 @@ from lattice.core.hashing import content_hash, normalize_arxiv, normalize_doi, s
 from lattice.core.llm import LLMClient
 from lattice.core.logging import get_logger
 from lattice.db.blobs import BlobStore, InMemoryBlobStore
-from lattice.db.cards import CorpusStore
+from lattice.db.cards import CorpusStore, InMemoryJobStore, JobStore, StoredFeatures
+from lattice.db.ingest_artifacts import (
+    IngestArtifactStore,
+    InMemoryIngestArtifactStore,
+)
 from lattice.db.vector import VectorRecord, VectorStore
 from lattice.embeddings.chunks import AspectEmbedder, ChunkEmbedder
 from lattice.embeddings.specter2 import Specter2Embedder
@@ -33,12 +42,14 @@ from lattice.graph.contradictions import (
     HeuristicNLIJudge,
     NLIJudge,
     detect_relations,
+    detect_relations_for,
 )
 from lattice.graph.entity_resolution import EntityResolver
 from lattice.graph.evolution import (
     CitationSignal,
     EdgeUpdate,
     compute_related_edges,
+    detect_supersession,
     diff_audit,
 )
 from lattice.graph.models import GraphEdge, GraphNode, GraphSnapshot
@@ -51,6 +62,7 @@ from lattice.ingestion.dedup import PaperIdentity
 from lattice.ingestion.models import (
     IngestJob,
     JobStage,
+    JobStatus,
     ParsedDocument,
     SourceType,
 )
@@ -88,6 +100,8 @@ class IngestionService:
     parser: Parser
     vectors: VectorStore
     cards: CorpusStore
+    jobs: JobStore = field(default_factory=InMemoryJobStore)
+    artifacts: IngestArtifactStore = field(default_factory=InMemoryIngestArtifactStore)
     #: Raw PDF storage for the in-app reader + citation deep-linking.
     blobs: BlobStore = field(default_factory=InMemoryBlobStore)
     graph: GraphStore = field(default_factory=FakeGraphStore)
@@ -99,7 +113,9 @@ class IngestionService:
     chunk_embedder: ChunkEmbedder = field(default_factory=lambda: ChunkEmbedder(dim=1024))
     aspect_embedder: AspectEmbedder = field(default_factory=lambda: AspectEmbedder(dim=1024))
 
-    # Per-paper feature state for O(k) incremental linking (hydrated from DB in prod).
+    # Per-paper feature state for O(k) incremental linking. Rehydrated from the
+    # persistent stores once per process by hydrate() (see below), so a restart does
+    # not leave a new paper linking against an empty pool.
     _features: dict[str, PaperFeatures] = field(default_factory=dict)
     _external_ids: dict[str, set[str]] = field(default_factory=dict)
     #: In-memory edge mirror so the explorer works without Neo4j (demo/dev mode).
@@ -114,6 +130,10 @@ class IngestionService:
     dataset_resolver: EntityResolver | None = None
     #: Text extractor for PDF sanity checks (defaults to pypdf via classify_pdf).
     text_extractor: Callable[[bytes], str] | None = None
+    #: Whether the in-memory linking state has been rehydrated from persistent stores
+    #: this process. Guards a one-shot load so restarts don't link against an empty pool.
+    _hydrated: bool = False
+    _hydrate_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def __post_init__(self) -> None:
         ws = self.settings.workspace_id
@@ -122,19 +142,123 @@ class IngestionService:
         self._writer = GraphWriter(self.graph, ws)
 
     # ------------------------------------------------------------------ public
+    async def hydrate(self) -> None:
+        """Rebuild the in-memory linking state from the persistent stores.
+
+        Incremental linking keeps a per-paper feature pool (SPECTER + aspect vectors,
+        method and dataset sets) and two entity-resolver registries in memory. Those
+        are lost on a process restart, which would leave a freshly ingested paper
+        linking against an empty pool and minting duplicate Method/Dataset nodes.
+        This loads them back from the card store exactly once per process, before the
+        first ingest. It is idempotent: papers already in the in-memory pool are
+        kept, and superseded papers are excluded (load_features filters them).
+
+        Rehydrated papers link at full similarity fidelity: SPECTER (sem),
+        methodology-section vectors (meth), method tags, datasets, citation
+        reference sets (S_cit bibliographic coupling), and external ids (direct-
+        citation detection) all persist and restore. Nothing degrades on restart.
+        """
+        if self._hydrated:
+            return
+        # Serialize hydration: a second concurrent ingest must WAIT for the in-flight
+        # load rather than race past a half-populated pool. Double-check inside the
+        # lock so only the first waiter does the work.
+        async with self._hydrate_lock:
+            if self._hydrated:
+                return
+            # Fail closed if the corpus cannot be loaded. Continuing with an empty
+            # candidate pool would make the next paper permanently miss links to
+            # pre-restart papers. The worker retry calls hydrate again.
+            stored = await self.cards.load_features()
+            self._populate_from_features(stored)
+            self._hydrated = True
+            log.info("hydrate.done", papers=len(stored))
+
+    def _populate_from_features(self, stored: list[StoredFeatures]) -> None:
+        import numpy as np
+
+        for feat in stored:
+            if feat.paper_id in self._features:
+                continue  # keep the richer in-memory features from this process
+            meth_vec = (feat.aspects or {}).get("methodology")
+            self._features[feat.paper_id] = PaperFeatures(
+                paper_id=feat.paper_id,
+                specter=(np.asarray(feat.specter, dtype=float) if feat.specter else None),
+                methodology_embedding=(np.asarray(meth_vec, dtype=float) if meth_vec else None),
+                methods=feat.methods,
+                datasets=feat.datasets,
+                references=set(feat.references),
+            )
+            if feat.external_ids:
+                # Direct-citation detection needs the candidate's own ids too.
+                self._external_ids.setdefault(feat.paper_id, set(feat.external_ids))
+            if feat.aspects:
+                # Quadrants (cross-community transfer) survive restarts too.
+                self._aspects.setdefault(feat.paper_id, feat.aspects)
+        # Re-register canonical entities so fuzzy resolution is stable across restarts:
+        # a variant name now resolves to the same node it did before the restart.
+        assert self.method_resolver is not None and self.dataset_resolver is not None
+        for feat in stored:
+            for m in feat.methods:
+                self.method_resolver.register(m)
+            for d in feat.datasets:
+                self.dataset_resolver.register(d)
+
     async def ingest_pdf(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
+        await self.hydrate()
+        job = await self.stage_pdf(source_ref, pdf_bytes)
+        if job.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
+            return job
+        saved = await self.artifacts.get(job.job_id)
+        ctx = PipelineContext(job=job, raw_pdf=pdf_bytes)
+        if saved is not None:
+            saved.restore(ctx)
+            ctx.raw_pdf = ctx.raw_pdf or pdf_bytes
+        return await self._run_context(ctx)
+
+    async def stage_pdf(self, source_ref: str, pdf_bytes: bytes) -> IngestJob:
+        """Persist a deterministic queued job and its source without processing it."""
+        digest = content_hash(pdf_bytes)
+        job_id = stable_id("job", self.settings.workspace_id, source_ref, digest)
+        existing = await self.jobs.get(job_id)
+        if existing is not None:
+            return existing
         job = IngestJob(
-            job_id=stable_id("job", source_ref, content_hash(pdf_bytes)),
+            job_id=job_id,
             workspace_id=self.settings.workspace_id,
             source_type=SourceType.FILE,
             source_ref=source_ref,
-            content_hash=content_hash(pdf_bytes),
+            content_hash=digest,
         )
         ctx = PipelineContext(job=job, raw_pdf=pdf_bytes)
+        await self.jobs.save(job)
+        await self.artifacts.save_context(ctx)
+        return job
+
+    async def resume_job(self, job_id: str) -> IngestJob | None:
+        """Resume a persisted paused or failed job from its last completed stage."""
+        await self.hydrate()
+        job = await self.jobs.get(job_id)
+        if job is None:
+            return None
+        if job.status in (JobStatus.SUCCEEDED, JobStatus.DUPLICATE):
+            return job
+        saved = await self.artifacts.get(job_id)
+        if saved is None or saved.raw_pdf is None:
+            return job
+        ctx = PipelineContext(job=job)
+        saved.restore(ctx)
+        return await self._run_context(ctx)
+
+    async def _run_context(self, ctx: PipelineContext) -> IngestJob:
+        await self._restore_runtime_state(ctx)
         ctx.extra["cost"] = CostTracker(
             per_job_cap=self.settings.cost.per_job_usd_cap,
             daily_cap=self.settings.cost.daily_usd_cap,
         )
+        cost = ctx.extra["cost"]
+        if isinstance(cost, CostTracker):
+            cost.job_usage.cost_usd = ctx.job.cost_usd
         pipeline = IngestionPipeline(
             {
                 JobStage.PARSING: self._parse,
@@ -142,9 +266,48 @@ class IngestionService:
                 JobStage.ENRICHING: self._enrich,
                 JobStage.EMBEDDING: self._embed,
                 JobStage.LINKING: self._link,
-            }
+            },
+            store=self.jobs,
+            artifact_store=self.artifacts,
+            max_attempts=self.settings.ingest_max_attempts,
         )
         return await pipeline.run(ctx)
+
+    async def _restore_runtime_state(self, ctx: PipelineContext) -> None:
+        """Restore process-local embedding state needed by the linking stage."""
+        feature = ctx.extra.get("_paper_feature")
+        if not isinstance(feature, dict) or ctx.job.paper_id is None:
+            return
+        import numpy as np
+
+        pid = ctx.job.paper_id
+        specter = feature.get("specter")
+        methodology = feature.get("methodology_embedding")
+        self._features[pid] = PaperFeatures(
+            paper_id=pid,
+            specter=np.asarray(specter, dtype=float) if isinstance(specter, list) else None,
+            methodology_embedding=(
+                np.asarray(methodology, dtype=float) if isinstance(methodology, list) else None
+            ),
+            methods=set(feature.get("methods", [])),
+            datasets=set(feature.get("datasets", [])),
+            references=set(feature.get("references", [])),
+            ingested_at=datetime.fromisoformat(str(feature["ingested_at"])),
+        )
+        external_ids = ctx.extra.get("_external_ids")
+        if isinstance(external_ids, list):
+            self._external_ids[pid] = {str(value) for value in external_ids}
+        aspects = ctx.extra.get("_aspects")
+        if isinstance(aspects, dict):
+            self._aspects[pid] = {
+                str(name): [float(value) for value in values]
+                for name, values in aspects.items()
+                if isinstance(values, list)
+            }
+        record_values = ctx.extra.get("_chunk_records")
+        if isinstance(record_values, list):
+            records = [VectorRecord(**value) for value in record_values if isinstance(value, dict)]
+            await self.vectors.upsert_chunks(records)
 
     # ------------------------------------------------------------------ stages
     async def _parse(self, ctx: PipelineContext) -> None:
@@ -160,7 +323,11 @@ class IngestionService:
 
         # Dedup against the corpus (idempotent no-op on re-ingest).
         index = await self.cards.corpus_index()
-        index.add(PaperIdentity(paper_id, doc.title, doc.authors, doc.doi, doc.arxiv_id, ctx.job.content_hash))
+        index.add(
+            PaperIdentity(
+                paper_id, doc.title, doc.authors, doc.doi, doc.arxiv_id, ctx.job.content_hash
+            )
+        )
         candidate = PaperIdentity(
             paper_id="__incoming__",
             title=doc.title,
@@ -173,6 +340,43 @@ class IngestionService:
         check_index = await self.cards.corpus_index()
         dup = check_index.find_duplicate(candidate)
         if dup.is_duplicate:
+            # A title-level match can be the same manuscript in a different VERSION
+            # (arXiv preprint vs the published, DOI-bearing article). That is a
+            # supersession, not a duplicate: the newer version should be ingested
+            # and the older one superseded, never silently rejected. Identifier
+            # matches (content hash / DOI / arXiv id) are the same artifact and
+            # stay duplicates.
+            supersession = None
+            if dup.reason in ("title_author_fuzzy", "title_exact") and dup.existing_paper_id:
+                existing = await self.cards.get(dup.existing_paper_id)
+                if existing is not None:
+                    new_has_doi = bool(normalize_doi(doc.doi))
+                    new_is_preprint = bool(normalize_arxiv(doc.arxiv_id)) and not new_has_doi
+                    supersession = detect_supersession(
+                        paper_id,
+                        new_has_doi,
+                        new_is_preprint,
+                        (
+                            existing.paper_id,
+                            bool(existing.doi),
+                            bool(existing.arxiv_id) and not existing.doi,
+                        ),
+                    )
+            if supersession is not None:
+                superseded_id, superseding_id = supersession
+                if superseding_id == paper_id:
+                    # The incoming paper is the published version: proceed with the
+                    # ingest; _link applies the supersession after the paper lands.
+                    ctx.extra["supersedes"] = superseded_id
+                    log.info(
+                        "supersession.detected", superseded=superseded_id, superseding=paper_id
+                    )
+                    return
+                ctx.extra["duplicate_of"] = dup.existing_paper_id
+                raise DuplicateError(
+                    f"outdated preprint of {dup.existing_paper_id} "
+                    "(published version already in corpus)"
+                )
             ctx.extra["duplicate_of"] = dup.existing_paper_id
             raise DuplicateError(f"duplicate of {dup.existing_paper_id} ({dup.reason})")
 
@@ -213,6 +417,10 @@ class IngestionService:
         ctx.extra.update(extra)
         if extra.get("s2_paper_id"):
             ctx.card.s2_paper_id = str(extra["s2_paper_id"])
+        if extra.get("openalex_id"):
+            # Keeps the paper matchable against OpenAlex-sourced reference lists
+            # (they cite by https://openalex.org/W... URL, not DOI).
+            ctx.card.openalex_id = str(extra["openalex_id"])
 
     async def _embed(self, ctx: PipelineContext) -> None:
         assert ctx.card is not None and ctx.document is not None
@@ -220,8 +428,16 @@ class IngestionService:
         pid = card.paper_id
 
         precomputed = ctx.extra.get("specter_embedding")
+        precomputed_vector = (
+            [float(value) for value in precomputed]
+            if isinstance(precomputed, list)
+            and all(isinstance(value, int | float) for value in precomputed)
+            else None
+        )
         paper_emb = self.specter.embed(
-            card.title, card.abstract, precomputed=precomputed  # type: ignore[arg-type]
+            card.title,
+            card.abstract,
+            precomputed=precomputed_vector,
         )
         aspects = self.aspect_embedder.embed_card(card)
 
@@ -248,6 +464,7 @@ class IngestionService:
 
         refs_value = ctx.extra.get("reference_ids")
         refs = set(refs_value) if isinstance(refs_value, list | set) else set()
+        ingested_at = datetime.now(UTC)
         self._features[pid] = PaperFeatures(
             paper_id=pid,
             specter=np.asarray(paper_emb.vector, dtype=float),
@@ -255,10 +472,21 @@ class IngestionService:
             methods=card.normalized_methods,
             datasets=card.normalized_datasets,
             references=refs,
-            ingested_at=datetime.now(UTC),
+            ingested_at=ingested_at,
         )
-        self._external_ids[pid] = _self_external_ids(card)
+        self._external_ids[pid] = card.external_ids
         self._aspects[pid] = aspects
+        ctx.extra["_paper_feature"] = {
+            "specter": paper_emb.vector,
+            "methodology_embedding": aspects["methodology"],
+            "methods": sorted(card.normalized_methods),
+            "datasets": sorted(card.normalized_datasets),
+            "references": sorted(refs),
+            "ingested_at": ingested_at.isoformat(),
+        }
+        ctx.extra["_external_ids"] = sorted(card.external_ids)
+        ctx.extra["_aspects"] = aspects
+        ctx.extra["_chunk_records"] = [record.__dict__ for record in records]
 
     async def _link(self, ctx: PipelineContext) -> None:
         assert ctx.card is not None and ctx.job.paper_id is not None
@@ -266,8 +494,11 @@ class IngestionService:
         pid = card.paper_id
         new_feat = self._features[pid]
 
-        # Candidate generation: top-k by SPECTER cosine among existing papers.
-        candidates = self._ann_candidates(pid, new_feat)
+        # Candidate generation: top-k by SPECTER cosine among existing papers. A
+        # paper this ingest supersedes is excluded - the published version must not
+        # link to its own preprint.
+        superseded_id = ctx.extra.get("supersedes")
+        candidates = [c for c in self._ann_candidates(pid, new_feat) if c.paper_id != superseded_id]
         calibrator = self._fit_calibrator()
         citations = self._citation_signals(new_feat, candidates)
 
@@ -279,18 +510,26 @@ class IngestionService:
             citations=citations,
         )
 
-        # Persist: paper node, entities, claims, then edges + audit (last, atomic).
+        # Persist in an idempotent order. A retry converges if a later store fails.
         await self._writer.upsert_paper(card)
+        assert self.method_resolver is not None
+        assert self.dataset_resolver is not None
         for author in card.authors:
             await self._writer.upsert_author(author.name, pid, s2_id=author.s2_id)
-        for method in card.methods_taxonomy + card.methodology.techniques:
-            res = self.method_resolver.resolve(method)  # type: ignore[union-attr]
+        method_names = card.methods_taxonomy + card.methodology.techniques
+        method_embs = self.chunk_embedder.embed_texts(method_names) if method_names else []
+        for method, emb in zip(method_names, method_embs, strict=True):
+            res = self.method_resolver.resolve(method, embedding=emb)
             await self._writer.upsert_method(res.key, res.name, pid)
-        for ds in card.datasets:
-            res = self.dataset_resolver.resolve(ds.name)  # type: ignore[union-attr]
-            await self._writer.upsert_dataset(res.key, ds.name, pid)
+        dataset_names = [ds.name for ds in card.datasets]
+        dataset_embs = self.chunk_embedder.embed_texts(dataset_names) if dataset_names else []
+        for ds_name, emb in zip(dataset_names, dataset_embs, strict=True):
+            res = self.dataset_resolver.resolve(ds_name, embedding=emb)
+            await self._writer.upsert_dataset(res.key, ds_name, pid)
         for concept in card.domains:
-            await self._writer.upsert_concept(stable_id(self.settings.workspace_id, "concept", concept), concept, pid)
+            await self._writer.upsert_concept(
+                stable_id(self.settings.workspace_id, "concept", concept), concept, pid
+            )
         for result in card.key_results:
             await self._writer.upsert_claim(pid, result.claim, result.evidence_location)
 
@@ -317,7 +556,17 @@ class IngestionService:
                 ]
             )
 
-        await self.cards.put_card(card)
+        # Persist the SPECTER vector and aspect embeddings alongside the card so
+        # incremental linking rehydrates at full similarity fidelity after a restart
+        # (and the epistemic quadrants keep their aspect vectors).
+        specter = new_feat.specter.tolist() if new_feat.specter is not None else None
+        await self.cards.put_card(
+            card,
+            specter=specter,
+            aspects=self._aspects.get(pid),
+            references=sorted(new_feat.references),
+            content_hash=ctx.job.content_hash,
+        )
         # Persist the source PDF last (after the card exists, for the FK), so the
         # reader can open it and citations can deep-link to a page.
         if ctx.raw_pdf:
@@ -326,19 +575,58 @@ class IngestionService:
         self._related[pid] = edges
         ctx.extra["edges_written"] = len(edges)
 
-    # ------------------------------------------------------------------ contradictions
-    async def analyze_relations(self, judge: NLIJudge | None = None) -> list[ClaimEdge]:
-        """Detect SUPPORTS/CONTRADICTS/EXTENDS relations across the corpus' claims.
+        if isinstance(superseded_id, str):
+            await self._apply_supersession(superseded_id, pid)
 
-        Groups every card's key results into ClaimRecords keyed by concept, runs the
-        judge over same-concept cross-paper pairs, persists the resulting edges to
-        the graph, and mirrors them in memory for the API. Defaults to the offline
-        heuristic judge; pass an LLM judge in production.
+        # Living graph: contradictions/support surface as papers arrive, not only
+        # on a manual full-corpus pass. (After supersession, so a replaced preprint's
+        # claims are already out of the comparison set.)
+        if self.settings.incremental_contradictions and card.key_results:
+            await self._detect_relations_incremental(card)
+
+    async def _apply_supersession(self, old_id: str, new_id: str) -> None:
+        """Supersede ``old_id`` with ``new_id`` (preprint -> published version).
+
+        Bi-temporal: the old paper and its history stay in every store; its edges
+        get ``invalid_at`` set (both directions) so default views hide them, a
+        SUPERSEDED_BY edge records the succession, and the old paper leaves the
+        linking candidate pool and the analytics so the same work is never counted
+        twice. All writes are idempotent (MERGE / UPDATE / set-discard).
         """
-        judge = judge or HeuristicNLIJudge()
+        await self._writer.set_superseded(old_id, new_id)
+        await self._writer.invalidate_related_edges_of(old_id, reason=f"superseded_by:{new_id}")
+        await self.cards.mark_superseded(old_id, new_id)
+        # Leave the in-memory linking pool and mirrors.
+        self._features.pop(old_id, None)
+        self._external_ids.pop(old_id, None)
+        self._aspects.pop(old_id, None)
+        self._related.pop(old_id, None)
+        for edge_list in self._related.values():
+            edge_list[:] = [e for e in edge_list if e.target_id != old_id]
+        self._claim_relations = [
+            e for e in self._claim_relations if old_id not in (e.source_paper, e.target_paper)
+        ]
+        log.info("supersession.applied", superseded=old_id, superseding=new_id)
+
+    async def _active_cards(self) -> list[PaperCard]:
+        """All cards minus superseded versions.
+
+        Analytics, exports, and default views must never count the same work twice
+        (a preprint and its published successor). Direct by-id reads intentionally
+        bypass this - superseded papers remain retrievable, just not aggregated.
+        """
+        cards = await self.cards.all_cards()
+        superseded = await self.cards.superseded_map()
+        if not superseded:
+            return cards
+        return [c for c in cards if c.paper_id not in superseded]
+
+    # ------------------------------------------------------------------ contradictions
+    def _claim_records(self, cards: list[PaperCard]) -> list[ClaimRecord]:
+        """Flatten cards' key results into concept-keyed ClaimRecords for the judge."""
         ws = self.settings.workspace_id
         claims: list[ClaimRecord] = []
-        for card in await self.cards.all_cards():
+        for card in cards:
             authors = frozenset(a.normalized_name for a in card.authors)
             concepts = card.domains or ["general"]
             for result in card.key_results:
@@ -354,6 +642,50 @@ class IngestionService:
                             evidence_location=result.evidence_location,
                         )
                     )
+        return claims
+
+    async def _detect_relations_incremental(self, card: PaperCard) -> None:
+        """Judge the new paper's claims against existing same-concept claims.
+
+        Runs at the end of every ingest (offline heuristic judge: free,
+        deterministic), so SUPPORTS/CONTRADICTS/EXTENDS edges accumulate as papers
+        arrive - the living graph - instead of waiting for a manual full-corpus
+        pass. Idempotent: graph writes are MERGEs and the in-memory mirror dedupes
+        by (source, target, relation).
+        """
+        existing_cards = [c for c in await self._active_cards() if c.paper_id != card.paper_id]
+        if not existing_cards:
+            return
+        report = await detect_relations_for(
+            self._claim_records([card]),
+            self._claim_records(existing_cards),
+            HeuristicNLIJudge(),
+        )
+        seen = {(e.source_id, e.target_id, str(e.relation)) for e in self._claim_relations}
+        added = 0
+        for edge in report.edges:
+            key = (edge.source_id, edge.target_id, str(edge.relation))
+            if key in seen:
+                continue
+            seen.add(key)
+            await self._writer.upsert_claim_relation(
+                edge.source_id, edge.target_id, str(edge.relation), edge.confidence
+            )
+            self._claim_relations.append(edge)
+            added += 1
+        if added:
+            log.info("contradictions.incremental", paper_id=card.paper_id, edges=added)
+
+    async def analyze_relations(self, judge: NLIJudge | None = None) -> list[ClaimEdge]:
+        """Detect SUPPORTS/CONTRADICTS/EXTENDS relations across the corpus' claims.
+
+        Groups every card's key results into ClaimRecords keyed by concept, runs the
+        judge over same-concept cross-paper pairs, persists the resulting edges to
+        the graph, and mirrors them in memory for the API. Defaults to the offline
+        heuristic judge; pass an LLM judge in production.
+        """
+        judge = judge or HeuristicNLIJudge()
+        claims = self._claim_records(await self._active_cards())
         report = await detect_relations(claims, judge)
         # Persist to the graph and mirror in memory (dedupe by id pair + relation).
         seen: set[tuple[str, str, str]] = set()
@@ -428,7 +760,7 @@ class IngestionService:
             cross_community_transfer,
         )
 
-        cards = await self.cards.all_cards()
+        cards = await self._active_cards()
         now_year = datetime.now(UTC).year
 
         # Known knowns: fuzzily cluster claims that state the same finding (exact-text
@@ -444,7 +776,10 @@ class IngestionService:
             for r in card.key_results:
                 if r.claim.strip():
                     items.append(
-                        (r.claim, SupportingPaper(card.paper_id, authors, method, dataset, card.year))
+                        (
+                            r.claim,
+                            SupportingPaper(card.paper_id, authors, method, dataset, card.year),
+                        )
                     )
         claim_clusters = cluster_claims(items)
         contradictions = await self.get_claim_relations("CONTRADICTS")
@@ -499,7 +834,11 @@ class IngestionService:
         # Unknown knowns: cross-community transfer (method next door to a problem).
         adj = self._adjacency()
         sources = [
-            (card.methods_taxonomy[0] if card.methods_taxonomy else "method", card.paper_id, self._aspects[card.paper_id]["methodology"])
+            (
+                card.methods_taxonomy[0] if card.methods_taxonomy else "method",
+                card.paper_id,
+                self._aspects[card.paper_id]["methodology"],
+            )
             for card in cards
             if card.paper_id in self._aspects
         ]
@@ -602,7 +941,7 @@ class IngestionService:
         from lattice.landscape.proposal import build_proposal
         from lattice.landscape.signals import DemandScorer
 
-        cards = await self.cards.all_cards()
+        cards = await self._active_cards()
         row, col = row.lower(), col.lower()
         papers = self._facet_papers(cards, row_facet, col_facet)
         demand = DemandScorer.from_cards(self.chunk_embedder, cards).score(row, col)
@@ -638,7 +977,7 @@ class IngestionService:
         from lattice.landscape.matrix import PaperFacets, build_gap_matrix, top_gaps
         from lattice.landscape.signals import DemandScorer
 
-        cards = await self.cards.all_cards()
+        cards = await self._active_cards()
         global_counts = global_counts or {}
         now_year = datetime.now(UTC).year
         facets = [
@@ -667,8 +1006,13 @@ class IngestionService:
                     row_facet, col_facet, cell.row, cell.col, global_count=cell.global_count
                 )
             )
+
         # Strongest opportunities first by the proposal's own confidence.
-        proposals.sort(key=lambda p: float(p["confidence"]), reverse=True)  # type: ignore[arg-type]
+        def confidence(proposal: dict[str, object]) -> float:
+            value = proposal.get("confidence")
+            return float(value) if isinstance(value, int | float | str) else 0.0
+
+        proposals.sort(key=confidence, reverse=True)
         return {"row_facet": row_facet, "col_facet": col_facet, "proposals": proposals}
 
     # ------------------------------------------------------------------ related work / export
@@ -676,7 +1020,7 @@ class IngestionService:
         snapshot = await self.graph_snapshot()
         community_of = {n.id: str(n.community) for n in snapshot.nodes}
         groups: dict[str, list[PaperCard]] = {}
-        for card in await self.cards.all_cards():
+        for card in await self._active_cards():
             groups.setdefault(community_of.get(card.paper_id, "0"), []).append(card)
         return groups
 
@@ -693,7 +1037,7 @@ class IngestionService:
     async def export_bibtex(self) -> str:
         from lattice.rag.related_work import corpus_to_bibtex
 
-        return corpus_to_bibtex(await self.cards.all_cards())
+        return corpus_to_bibtex(await self._active_cards())
 
     async def export_obsidian(self) -> dict[str, str]:
         from lattice.export.obsidian import card_to_note
@@ -705,7 +1049,7 @@ class IngestionService:
             neighbors.setdefault(e.source, []).append((e.target, e.weight))
             neighbors.setdefault(e.target, []).append((e.source, e.weight))
         notes: dict[str, str] = {}
-        for card in await self.cards.all_cards():
+        for card in await self._active_cards():
             nbrs = [(titles.get(t, t), w) for t, w in neighbors.get(card.paper_id, [])]
             notes[card.title] = card_to_note(card, nbrs)
         return notes
@@ -724,7 +1068,7 @@ class IngestionService:
         from lattice.graph.contradictions import ClaimRelation
         from lattice.landscape.momentum import momentum_score
 
-        cards = await self.cards.all_cards()
+        cards = await self._active_cards()
         snapshot = await self.graph_snapshot()
         label = period_label or datetime.now(UTC).strftime("%Y-W%V")
 
@@ -752,7 +1096,10 @@ class IngestionService:
                 movers=movers,
             )
         )
-        payload: dict[str, object] = {"report": report.to_json(), "markdown": render_markdown(report)}
+        payload: dict[str, object] = {
+            "report": report.to_json(),
+            "markdown": render_markdown(report),
+        }
         return payload
 
     # ------------------------------------------------------------------ lineage
@@ -769,7 +1116,7 @@ class IngestionService:
                 year=card.year,
                 methods=card.normalized_methods,
             )
-            for card in await self.cards.all_cards()
+            for card in await self._active_cards()
         ]
         return build_lineage(nodes, list(self._cites), method).to_json()
 
@@ -796,7 +1143,7 @@ class IngestionService:
                 neighbors.setdefault(e.source, []).append((e.weight, centrality.get(e.target, 0.0)))
                 neighbors.setdefault(e.target, []).append((e.weight, centrality.get(e.source, 0.0)))
 
-        cards = await self.cards.all_cards()
+        cards = await self._active_cards()
         corpus_methods: set[str] = set()
         for card in cards:
             if not read_ids or card.paper_id in read_ids:
@@ -830,12 +1177,20 @@ class IngestionService:
         from lattice.rag.related_work import bibtex_key
 
         wanted = list(dict.fromkeys(paper_ids))  # dedupe, preserve order
+        # Deliberately all_cards, not _active_cards: an explicitly selected paper
+        # (e.g. a superseded preprint opened from its page) must still summarize.
         by_id = {c.paper_id: c for c in await self.cards.all_cards()}
         cards = [by_id[pid] for pid in wanted if pid in by_id]
         if not cards:
             return {
-                "count": 0, "papers": [], "methods": [], "datasets": [], "domains": [],
-                "year_range": None, "open_problems": [], "contradictions": [],
+                "count": 0,
+                "papers": [],
+                "methods": [],
+                "datasets": [],
+                "domains": [],
+                "year_range": None,
+                "open_problems": [],
+                "contradictions": [],
                 "markdown": "_No papers in selection._\n",
             }
 
@@ -861,8 +1216,10 @@ class IngestionService:
         selected = {c.paper_id for c in cards}
         contradictions = [
             {
-                "source_paper": e.source_paper, "source_text": e.source_text,
-                "target_paper": e.target_paper, "target_text": e.target_text,
+                "source_paper": e.source_paper,
+                "source_text": e.source_text,
+                "target_paper": e.target_paper,
+                "target_text": e.target_text,
                 "confidence": round(e.confidence, 3),
             }
             for e in await self.get_claim_relations("CONTRADICTS")
@@ -871,11 +1228,13 @@ class IngestionService:
 
         papers = [
             {
-                "paper_id": c.paper_id, "title": c.title, "year": c.year,
+                "paper_id": c.paper_id,
+                "title": c.title,
+                "year": c.year,
                 "key": bibtex_key(c),
                 "representative_claim": c.key_results[0].claim if c.key_results else None,
             }
-            for c in sorted(cards, key=lambda c: (c.year or 0))
+            for c in sorted(cards, key=lambda c: c.year or 0)
         ]
         top_methods = [m for m, _ in methods.most_common(8)]
         top_datasets = [d for d, _ in datasets.most_common(6)]
@@ -888,8 +1247,13 @@ class IngestionService:
         year_range = [min(years), max(years)] if years else None
 
         markdown = self._summary_markdown(
-            cards, top_methods, top_datasets, top_domains, year_range,
-            shared_problems, contradictions,
+            cards,
+            top_methods,
+            top_datasets,
+            top_domains,
+            year_range,
+            shared_problems,
+            contradictions,
         )
         return {
             "count": len(cards),
@@ -935,7 +1299,7 @@ class IngestionService:
                 lines.append(f"- {p['problem']} ({p['mentions']} papers)")
             lines.append("")
         lines.append("## Papers")
-        for c in sorted(cards, key=lambda c: (c.year or 0)):
+        for c in sorted(cards, key=lambda c: c.year or 0):
             claim = f" — {c.key_results[0].claim}" if c.key_results else ""
             lines.append(f"- **{c.title}** ({c.year or '?'}){claim}")
         return "\n".join(lines).rstrip() + "\n"
@@ -955,12 +1319,10 @@ class IngestionService:
         """
         if self.reader is not None:
             return await self.reader.snapshot(self.settings.workspace_id, as_of_year)
-        cards = {c.paper_id: c for c in await self.cards.all_cards()}
+        cards = {c.paper_id: c for c in await self._active_cards()}
         if as_of_year is not None:
             cards = {
-                pid: c
-                for pid, c in cards.items()
-                if c.year is not None and c.year <= as_of_year
+                pid: c for pid, c in cards.items() if c.year is not None and c.year <= as_of_year
             }
         # Deduplicate undirected edges (max weight).
         undirected: dict[tuple[str, str], GraphEdge] = {}
@@ -975,7 +1337,9 @@ class IngestionService:
                 prev = undirected.get(key)
                 if prev is None or e.weight > prev.weight:
                     undirected[key] = GraphEdge(
-                        source=a, target=b, weight=round(e.weight, 4),
+                        source=a,
+                        target=b,
+                        weight=round(e.weight, 4),
                         components={k: round(v, 4) for k, v in e.result.components.items()},
                     )
 
@@ -1013,15 +1377,12 @@ class IngestionService:
         ``buckets`` is the running paper count up to and including each year, so the
         UI can show how the field accreted and bound the slider to real data.
         """
-        years = sorted(
-            c.year for c in await self.cards.all_cards() if c.year is not None
-        )
+        years = sorted(c.year for c in await self._active_cards() if c.year is not None)
         if not years:
             return {"min_year": None, "max_year": None, "buckets": []}
         lo, hi = years[0], years[-1]
         buckets = [
-            {"year": y, "papers": sum(1 for yr in years if yr <= y)}
-            for y in range(lo, hi + 1)
+            {"year": y, "papers": sum(1 for yr in years if yr <= y)} for y in range(lo, hi + 1)
         ]
         return {"min_year": lo, "max_year": hi, "buckets": buckets}
 
@@ -1046,9 +1407,7 @@ class IngestionService:
         return {
             "since_year": since_year,
             "until_year": until_year,
-            "new_papers": [
-                {"paper_id": n.id, "title": n.title, "year": n.year} for n in new_nodes
-            ],
+            "new_papers": [{"paper_id": n.id, "title": n.title, "year": n.year} for n in new_nodes],
             "new_edges": [e.to_json() for e in new_edges],
             "counts": {"papers": len(new_nodes), "edges": len(new_edges)},
         }
@@ -1064,10 +1423,20 @@ class IngestionService:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [f for _s, f in scored[: self.settings.similarity.candidate_k]]
 
+    #: Max vectors used for a calibrator refit. All-pairs over the whole corpus is
+    #: O(n^2) on EVERY ingest (O(n^3) across a backfill); the p5/p95 percentile
+    #: estimates converge long before ~2k pairs, so cap at 64 vectors (2016 pairs).
+    _CALIBRATION_VECS = 64
+
     def _fit_calibrator(self) -> CosineCalibrator:
         vecs = [f.specter for f in self._features.values() if f.specter is not None]
         if len(vecs) < 3:
             return CosineCalibrator()
+        if len(vecs) > self._CALIBRATION_VECS:
+            # Deterministic, evenly spaced subsample: reproducible for a given
+            # corpus, no RNG, and it spans early and late ingests alike.
+            step = len(vecs) / self._CALIBRATION_VECS
+            vecs = [vecs[int(i * step)] for i in range(self._CALIBRATION_VECS)]
         cosines: list[float] = []
         for i in range(len(vecs)):
             for j in range(i + 1, len(vecs)):
@@ -1086,14 +1455,3 @@ class IngestionService:
             if direct:
                 out[cand.paper_id] = CitationSignal(direct_citation=True)
         return out
-
-
-def _self_external_ids(card: PaperCard) -> set[str]:
-    ids: set[str] = set()
-    if card.doi:
-        ids.add(f"DOI:{card.doi}")
-    if card.arxiv_id:
-        ids.add(card.arxiv_id)
-    if card.s2_paper_id:
-        ids.add(card.s2_paper_id)
-    return ids

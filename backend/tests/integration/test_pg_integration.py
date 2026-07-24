@@ -56,10 +56,26 @@ async def test_upsert_and_ann_search(pool) -> None:  # type: ignore[no-untyped-d
     store = PgVectorStore(pool=pool, workspace_id="ws")
     await store.upsert_chunks(
         [
-            VectorRecord("c1", "p1", "ws", "Copper LSTM", "Results",
-                         "LSTM beats ARIMA on RMSE for copper", _vec((0, 1.0)), "Table 1"),
-            VectorRecord("c2", "p2", "ws", "Copper VAR", "Results",
-                         "VAR underperforms on commodity panels", _vec((1, 1.0)), "Sec 4"),
+            VectorRecord(
+                "c1",
+                "p1",
+                "ws",
+                "Copper LSTM",
+                "Results",
+                "LSTM beats ARIMA on RMSE for copper",
+                _vec((0, 1.0)),
+                "Table 1",
+            ),
+            VectorRecord(
+                "c2",
+                "p2",
+                "ws",
+                "Copper VAR",
+                "Results",
+                "VAR underperforms on commodity panels",
+                _vec((1, 1.0)),
+                "Sec 4",
+            ),
         ]
     )
     # Query closest to the first vector -> p1 should rank first.
@@ -74,15 +90,38 @@ async def test_hybrid_search_combines_vector_and_text(pool) -> None:  # type: ig
     store = PgVectorStore(pool=pool, workspace_id="ws")
     await store.upsert_chunks(
         [
-            VectorRecord("c1", "p1", "ws", "Copper LSTM", "Results",
-                         "LSTM attention beats ARIMA on RMSE", _vec((0, 1.0)), "Table 1"),
-            VectorRecord("c2", "p2", "ws", "Copper VAR", "Methods",
-                         "vector autoregression on commodity panels", _vec((5, 1.0)), "Sec 2"),
+            VectorRecord(
+                "c1",
+                "p1",
+                "ws",
+                "Copper LSTM",
+                "Results",
+                "LSTM attention beats ARIMA on RMSE",
+                _vec((0, 1.0)),
+                "Table 1",
+            ),
+            VectorRecord(
+                "c2",
+                "p2",
+                "ws",
+                "Copper VAR",
+                "Methods",
+                "vector autoregression on commodity panels",
+                _vec((5, 1.0)),
+                "Sec 2",
+            ),
         ]
     )
-    hits = await store.hybrid_search("ARIMA RMSE", _vec((0, 1.0)), k=2, filters={"workspace_id": "ws"})
+    hits = await store.hybrid_search(
+        "ARIMA RMSE", _vec((0, 1.0)), k=2, filters={"workspace_id": "ws"}
+    )
     assert hits and hits[0].paper_id == "p1"
     assert hits[0].evidence_location == "Table 1"
+    # score must be the fused rank score: non-increasing across the result list, so
+    # it agrees with the returned order (regression: it used to report vec_score,
+    # which is non-monotonic when keyword weight reorders the rows).
+    scores = [h.score for h in hits]
+    assert scores == sorted(scores, reverse=True)
 
 
 async def test_upsert_is_idempotent(pool) -> None:  # type: ignore[no-untyped-def]

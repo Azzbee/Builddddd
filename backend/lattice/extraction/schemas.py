@@ -10,9 +10,11 @@ deep-link into the PDF and the agent can cite precisely.
 
 from __future__ import annotations
 
+import types
 from enum import StrEnum
+from typing import Any, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from lattice.core.hashing import normalize_text
 
@@ -26,6 +28,102 @@ class PaperType(StrEnum):
     METHODS = "methods"
     DATASET = "dataset"
     UNKNOWN = "unknown"
+
+    @classmethod
+    def _missing_(cls, value: object) -> PaperType | None:
+        """Case/whitespace-insensitive lookup: LLMs emit "Empirical" as readily as
+        "empirical"; the case carries no meaning, so accept it."""
+        if isinstance(value, str):
+            low = value.strip().lower()
+            for member in cls:
+                if member.value == low:
+                    return member
+        return None
+
+
+def _accepts_none(annotation: Any) -> bool:
+    """True if ``annotation`` permits None (``T | None`` / ``Optional[T]``)."""
+    origin = get_origin(annotation)
+    if origin in (Union, types.UnionType):
+        return type(None) in get_args(annotation)
+    return annotation is type(None)
+
+
+def _list_element_type(annotation: Any) -> Any:
+    """The element type of a ``list[...]`` annotation, or None."""
+    if get_origin(annotation) is not list:
+        return None
+    args = get_args(annotation)
+    return args[0] if args else None
+
+
+def _clean_model_list(items: list[Any], elem: type[BaseModel]) -> list[Any]:
+    """Normalize a list of LLM-produced entries for a nested model.
+
+    * a bare string entry maps onto the element's single required field when that is
+      unambiguous (``"datasets": ["LME Copper"]`` -> ``{"name": "LME Copper"}``);
+    * ``null`` entries and dict entries whose required identity field is null or
+      missing (a live local-model failure: ``{"name": null, "source": null, ...}``)
+      are noise meaning "nothing here" - drop the entry, not the whole extraction.
+      This matches the repo's hallucination-guard stance: prefer omission.
+    """
+    required = [n for n, f in elem.model_fields.items() if f.is_required()]
+    out: list[Any] = []
+    for item in items:
+        if item is None:
+            continue
+        if isinstance(item, str) and len(required) == 1:
+            item = {required[0]: item}
+        if isinstance(item, dict) and any(item.get(r) is None for r in required):
+            continue  # degenerate entry: required identity absent/null
+        out.append(item)
+    return out
+
+
+class LLMTolerantModel(BaseModel):
+    """Base for models populated from LLM output.
+
+    Weak or cheap models reliably produce shape quirks that carry no semantic
+    ambiguity, so we normalize them instead of failing the whole extraction into the
+    repair loop (every case below was observed live from a local 7B model):
+
+    * ``null`` for an "empty" field that does not accept None -> treat as absent so
+      the field default applies. A *required* field sent as null still fails with a
+      clear "Field required" error, which is what the repair prompt needs.
+    * a bare string where a list is expected -> wrap it in a one-element list.
+    * inside lists of nested models: ``null`` entries and entries whose required
+      identity field is null/missing are dropped (see :func:`_clean_model_list`);
+      a bare string entry maps onto the element's single required field.
+    * ``null`` entries inside plain lists (e.g. ``["a", null]``) are dropped.
+    * unknown extra keys -> ignored. (Internal models like ``PaperCard`` stay
+      ``extra="forbid"``; tolerance is strictly an LLM-boundary property.)
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_llm_output(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out: dict[str, Any] = {}
+        for key, value in data.items():
+            fld = cls.model_fields.get(key)
+            if fld is None:
+                continue  # unknown key from the model: drop it
+            if value is None and not _accepts_none(fld.annotation):
+                continue  # null-for-empty: let the default (or required error) apply
+            elem = _list_element_type(fld.annotation)
+            if elem is not None:
+                if isinstance(value, str):
+                    value = [value]  # bare scalar where a list belongs
+                if isinstance(value, list):
+                    if isinstance(elem, type) and issubclass(elem, BaseModel):
+                        value = _clean_model_list(value, elem)
+                    else:
+                        value = [v for v in value if v is not None]
+            out[key] = value
+        return out
 
 
 class Author(BaseModel):
@@ -41,10 +139,8 @@ class Author(BaseModel):
         return normalize_text(self.name)
 
 
-class DatasetRef(BaseModel):
+class DatasetRef(LLMTolerantModel):
     """A dataset used or introduced by the paper."""
-
-    model_config = ConfigDict(extra="forbid")
 
     name: str
     source: str | None = None
@@ -58,11 +154,9 @@ class DatasetRef(BaseModel):
         return normalize_text(self.name)
 
 
-class Result(BaseModel):
+class Result(LLMTolerantModel):
     """A single key result / claim, kept granular for citation grounding and
     promotion to first-class Claim nodes in the graph."""
-
-    model_config = ConfigDict(extra="forbid")
 
     claim: str
     metric: str | None = None
@@ -72,10 +166,8 @@ class Result(BaseModel):
     evidence_location: str = ""
 
 
-class ReproSignals(BaseModel):
+class ReproSignals(LLMTolerantModel):
     """Reproducibility signals extracted from the paper."""
-
-    model_config = ConfigDict(extra="forbid")
 
     code_available: bool | None = None
     data_available: bool | None = None
@@ -83,9 +175,7 @@ class ReproSignals(BaseModel):
     code_url: str | None = None
 
 
-class Methodology(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class Methodology(LLMTolerantModel):
     approach_summary: str
     #: High-level family, e.g. ["statistical", "deep learning", "econometric"].
     method_family: list[str] = Field(default_factory=list)
@@ -125,6 +215,7 @@ class PaperCard(BaseModel):
     doi: str | None = None
     arxiv_id: str | None = None
     s2_paper_id: str | None = None
+    openalex_id: str | None = None  # full OpenAlex URL form, matching reference ids
     abstract: str | None = None
 
     # --- LLM-extracted intellectual content ---
@@ -162,6 +253,26 @@ class PaperCard(BaseModel):
         return max(0.0, min(1.0, v))
 
     @property
+    def external_ids(self) -> set[str]:
+        """Every id this paper is known by, in the same forms reference lists use.
+
+        This is the citation-id space for direct-citation detection: another
+        paper's ``references`` (DOIs from S2/Crossref, ``https://openalex.org/W...``
+        URLs from OpenAlex, S2 paper ids) intersect against this set. Each id keeps
+        its source's native form so the intersection actually matches.
+        """
+        ids: set[str] = set()
+        if self.doi:
+            ids.add(f"DOI:{self.doi}")
+        if self.arxiv_id:
+            ids.add(self.arxiv_id)
+        if self.s2_paper_id:
+            ids.add(self.s2_paper_id)
+        if self.openalex_id:
+            ids.add(self.openalex_id)
+        return ids
+
+    @property
     def normalized_methods(self) -> set[str]:
         """Normalized method tags used by entity resolution and S_meth."""
         tags = list(self.methods_taxonomy) + list(self.methodology.techniques)
@@ -172,12 +283,10 @@ class PaperCard(BaseModel):
         return {d.normalized_name for d in self.datasets if d.name.strip()}
 
 
-class LLMPaperCardContent(BaseModel):
+class LLMPaperCardContent(LLMTolerantModel):
     """The exact JSON shape requested from the LLM. Identity fields are excluded
     because they are filled deterministically; this keeps the model focused on
     intellectual content and shrinks the validation surface."""
-
-    model_config = ConfigDict(extra="forbid")
 
     problem_statement: str
     research_questions: list[str] = Field(default_factory=list)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+
 import pytest
-from lattice.config import Settings, get_settings
+from lattice.config import PostgresSettings, Settings, SimilarityWeights, get_settings
 from lattice.core.cost import CostTracker, Usage, estimate_cost, price_for
 from lattice.core.errors import CostCapExceeded
 from lattice.core.hashing import (
@@ -11,6 +13,39 @@ from lattice.core.hashing import (
     normalize_text,
     stable_id,
 )
+from lattice.core.llm import LLMResponse
+
+
+# --------------------------------------------------------------- LLM JSON salvage
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"a": 1}',  # clean
+        '```json\n{"a": 1}\n```',  # fenced
+        '```\n{"a": 1}\n```',  # fenced without language tag
+        'Here is the JSON you asked for:\n```json\n{"a": 1}\n```\nHope this helps!',  # prose + fence
+        'Sure! The result is {"a": 1} as requested.',  # bare prose wrapping
+    ],
+)
+def test_llm_response_json_salvages_common_wrappings(text: str) -> None:
+    assert LLMResponse(text=text).json() == {"a": 1}
+
+
+def test_llm_response_json_nested_braces_in_prose() -> None:
+    # first-{ to last-} must span the whole object, not stop at an inner brace.
+    out = LLMResponse(text='prefix {"a": {"b": [1, 2]}} suffix').json()
+    assert out == {"a": {"b": [1, 2]}}
+
+
+def test_llm_response_json_top_level_array_passes_through() -> None:
+    assert LLMResponse(text="[1, 2, 3]").json() == [1, 2, 3]
+
+
+def test_llm_response_json_garbage_still_raises() -> None:
+    with pytest.raises(json.JSONDecodeError):
+        LLMResponse(text="I could not produce any JSON, sorry.").json()
+    with pytest.raises(json.JSONDecodeError):
+        LLMResponse(text="broken {not json} here").json()
 
 
 def test_content_hash_is_stable_and_distinct() -> None:
@@ -101,3 +136,49 @@ def test_similarity_weight_negative_rejected(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("LATTICE_SIMILARITY__ALPHA", "-1")
     with pytest.raises(ValueError):
         Settings()
+
+
+def test_production_settings_require_auth_and_restrict_cors() -> None:
+    with pytest.raises(ValueError, match="AUTH_TOKEN"):
+        Settings(environment="prod", auth_token=None)
+    with pytest.raises(ValueError, match="wildcard CORS"):
+        Settings(environment="prod", auth_token="secret", cors_origins=["*"])
+    settings = Settings(
+        environment="prod",
+        auth_token="secret",
+        cors_origins=["https://lattice.example"],
+    )
+    assert settings.cors_origins == ["https://lattice.example"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_workspaces", 0),
+        ("rate_limit_per_min", -1),
+        ("max_upload_mb", 0),
+        ("ingest_max_attempts", 0),
+        ("readiness_timeout_s", 0),
+    ],
+)
+def test_settings_reject_unsafe_runtime_limits(field: str, value: int) -> None:
+    with pytest.raises(ValueError):
+        Settings(**{field: value})
+
+
+def test_similarity_settings_require_valid_probabilities_and_a_nonzero_weight() -> None:
+    with pytest.raises(ValueError):
+        SimilarityWeights(tau=1.1)
+    with pytest.raises(ValueError, match="at least one similarity weight"):
+        SimilarityWeights(alpha=0, beta=0, gamma=0, delta=0)
+
+
+def test_postgres_settings_require_ordered_pool_limits() -> None:
+    with pytest.raises(ValueError, match="pool_max"):
+        PostgresSettings(pool_min=5, pool_max=4)
+
+
+@pytest.mark.parametrize("workspace", ["", "../escape", "white space", "x" * 65])
+def test_settings_reject_invalid_workspace_ids(workspace: str) -> None:
+    with pytest.raises(ValueError, match="workspace id"):
+        Settings(workspace_id=workspace)

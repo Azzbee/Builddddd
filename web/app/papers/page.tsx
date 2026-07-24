@@ -11,7 +11,10 @@ export default function PapersPage() {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    api.listPapers().then(setPapers).catch((e) => setError(String(e)));
+    api
+      .listPapers()
+      .then(setPapers)
+      .catch((e) => setError(String(e)));
   }, []);
 
   const filtered = useMemo(
@@ -27,7 +30,9 @@ export default function PapersPage() {
   return (
     <div className="space-y-4">
       <header className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold text-white">Papers ({papers.length})</h1>
+        <h1 className="text-xl font-semibold text-white">
+          Papers ({papers.length})
+        </h1>
         <input
           className="input max-w-xs"
           placeholder="Filter by title or author"
@@ -35,15 +40,30 @@ export default function PapersPage() {
           onChange={(e) => setQ(e.target.value)}
         />
       </header>
-      {error && <div className="card border-bad text-bad">Backend unreachable: {error}</div>}
+      {error && (
+        <div className="card border-bad text-bad">
+          Backend unreachable: {error}
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {filtered.map((p) => (
-          <Link key={p.paper_id} href={`/papers/${p.paper_id}`} className="card hover:border-accent">
+          <Link
+            key={p.paper_id}
+            href={`/papers/${p.paper_id}`}
+            className="card hover:border-accent"
+          >
             <div className="flex items-start justify-between gap-2">
               <h2 className="text-sm font-medium text-white">{p.title}</h2>
-              {p.needs_review && <span className="chip border-warn text-warn">review</span>}
+              {p.needs_review && (
+                <span className="chip border-warn text-warn">review</span>
+              )}
+              {p.superseded_by && (
+                <span className="chip border-muted text-muted">superseded</span>
+              )}
             </div>
-            <p className="mt-1 truncate text-xs text-muted">{p.authors.join(", ") || "unknown"}</p>
+            <p className="mt-1 truncate text-xs text-muted">
+              {p.authors.join(", ") || "unknown"}
+            </p>
             <div className="mt-2 flex flex-wrap gap-1">
               <span className="chip">{p.year ?? "?"}</span>
               <span className="chip">{p.paper_type}</span>

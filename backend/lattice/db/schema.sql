@@ -16,12 +16,20 @@ CREATE TABLE IF NOT EXISTS papers (
     s2_paper_id     TEXT,
     card            JSONB NOT NULL DEFAULT '{}',   -- full PaperCard
     specter         vector(768),
+    aspects         JSONB,                          -- problem/methodology/results vectors
+    reference_ids   JSONB,                          -- external ids this paper cites (S_cit)
+    superseded_by   TEXT,                           -- paper_id of the superseding version
     confidence      REAL,
     needs_review    BOOLEAN NOT NULL DEFAULT FALSE,
     content_hash    TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Upgrade path for databases created before these columns existed (CREATE TABLE
+-- IF NOT EXISTS does not add columns to an existing table).
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS aspects JSONB;
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS reference_ids JSONB;
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS superseded_by TEXT;
 CREATE INDEX IF NOT EXISTS papers_workspace ON papers (workspace_id);
 CREATE INDEX IF NOT EXISTS papers_doi ON papers (doi);
 CREATE INDEX IF NOT EXISTS papers_arxiv ON papers (arxiv_id);
@@ -59,12 +67,28 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
     status        TEXT NOT NULL,
     error_code    TEXT,
     error_message TEXT,
+    retryable     BOOLEAN NOT NULL DEFAULT FALSE,
     attempts      INT NOT NULL DEFAULT 0,
     cost_usd      REAL NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE ingest_jobs ADD COLUMN IF NOT EXISTS retryable BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS jobs_status ON ingest_jobs (status);
+
+-- Inputs and stage outputs required to continue an ingest after a worker restart.
+-- Kept separate from ingest_jobs so job listings never fetch PDF bytes or large JSON.
+CREATE TABLE IF NOT EXISTS ingest_artifacts (
+    job_id        TEXT PRIMARY KEY REFERENCES ingest_jobs(job_id) ON DELETE CASCADE,
+    workspace_id  TEXT NOT NULL DEFAULT 'default',
+    raw_pdf       BYTEA,
+    document      JSONB,
+    card          JSONB,
+    chunks        JSONB NOT NULL DEFAULT '[]',
+    extra         JSONB NOT NULL DEFAULT '{}',
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ingest_artifacts_workspace ON ingest_artifacts (workspace_id);
 
 -- Every weight change, old -> new, with reason. Nothing is silently overwritten.
 CREATE TABLE IF NOT EXISTS edge_audit (

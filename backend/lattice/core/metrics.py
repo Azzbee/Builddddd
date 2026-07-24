@@ -76,10 +76,14 @@ class MetricsRegistry:
         with self._lock:
             return self._histograms.setdefault(name, _Histogram(help=help))
 
-    def inc(self, name: str, labels: dict[str, str] | None = None, amount: float = 1.0, help: str = "") -> None:
+    def inc(
+        self, name: str, labels: dict[str, str] | None = None, amount: float = 1.0, help: str = ""
+    ) -> None:
         self.counter(name, help).inc(_label_key(labels), amount)
 
-    def observe(self, name: str, value: float, labels: dict[str, str] | None = None, help: str = "") -> None:
+    def observe(
+        self, name: str, value: float, labels: dict[str, str] | None = None, help: str = ""
+    ) -> None:
         self.histogram(name, help).observe(_label_key(labels), value)
 
     def reset(self) -> None:

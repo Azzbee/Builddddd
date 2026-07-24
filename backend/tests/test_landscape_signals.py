@@ -70,7 +70,10 @@ def test_matrix_blind_spot_via_global_count() -> None:
     papers = [PaperFacets("p1", 2024, methods={"lstm"}, datasets={"lme"})]
     # (lstm, comex) is empty locally; high global count -> blind spot, not empty.
     cells = build_gap_matrix(
-        papers, "method", "dataset", now_year=2026,
+        papers,
+        "method",
+        "dataset",
+        now_year=2026,
         global_count_fn=lambda r, c: 200 if (r, c) == ("lstm", "comex") else 0,
     )
     by = {(c.row, c.col): c for c in cells}
@@ -80,7 +83,10 @@ def test_matrix_blind_spot_via_global_count() -> None:
         PaperFacets("p2", 2024, methods={"var"}, datasets={"comex"}),
     ]
     cells2 = build_gap_matrix(
-        papers2, "method", "dataset", now_year=2026,
+        papers2,
+        "method",
+        "dataset",
+        now_year=2026,
         global_count_fn=lambda r, c: 200 if (r, c) == ("lstm", "comex") else 0,
     )
     by2 = {(c.row, c.col): c for c in cells2}

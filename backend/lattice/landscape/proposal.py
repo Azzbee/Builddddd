@@ -49,7 +49,12 @@ class Evidence:
     note: str
 
     def to_json(self) -> dict[str, object]:
-        return {"paper_id": self.paper_id, "title": self.title, "year": self.year, "note": self.note}
+        return {
+            "paper_id": self.paper_id,
+            "title": self.title,
+            "year": self.year,
+            "note": self.note,
+        }
 
 
 @dataclass
@@ -200,7 +205,9 @@ def build_proposal(
     # --- novelty / state framing -------------------------------------------------
     if in_cell:
         state = "occupied"
-        novelty = f"Already studied in the corpus ({len(in_cell)} paper(s)) - this maps the prior art."
+        novelty = (
+            f"Already studied in the corpus ({len(in_cell)} paper(s)) - this maps the prior art."
+        )
     elif global_count >= blind_spot_min_global:
         state = "blind_spot"
         novelty = (
@@ -209,7 +216,9 @@ def build_proposal(
         )
     elif global_count > 0:
         state = "gap"
-        novelty = f"Lightly explored externally (~{global_count} papers) and absent from your corpus."
+        novelty = (
+            f"Lightly explored externally (~{global_count} papers) and absent from your corpus."
+        )
     else:
         state = "gap"
         novelty = "Greenfield: no external work surfaced - higher risk, higher reward."
@@ -220,11 +229,11 @@ def build_proposal(
 
     row_track = [
         _evidence(p, f"applies {row} to {', '.join(sorted(p.col_values)) or 'related problems'}")
-        for p in sorted(row_side, key=lambda p: (p.year or 0), reverse=True)[:4]
+        for p in sorted(row_side, key=lambda p: p.year or 0, reverse=True)[:4]
     ]
     col_track = [
         _evidence(p, f"studies {col} with {', '.join(sorted(p.row_values)) or 'other methods'}")
-        for p in sorted(col_side, key=lambda p: (p.year or 0), reverse=True)[:4]
+        for p in sorted(col_side, key=lambda p: p.year or 0, reverse=True)[:4]
     ]
 
     # --- thesis ------------------------------------------------------------------
@@ -272,7 +281,9 @@ def build_proposal(
     if state == "blind_spot":
         risks.append("Heavily studied elsewhere: confirm you are not reinventing known results.")
     if state == "gap" and global_count == 0:
-        risks.append("No external signal found: the gap may reflect infeasibility, not opportunity.")
+        risks.append(
+            "No external signal found: the gap may reflect infeasibility, not opportunity."
+        )
     risks.extend(f"Known pitfall: {lim}" for lim in _dedup_limitations(row_side + col_side))
 
     # Confidence in the *opportunity*: more building blocks + demand + momentum -> higher.
@@ -287,7 +298,7 @@ def build_proposal(
 
     # The method to borrow is the row method itself; cite its strongest application.
     if method_to_borrow is None and row_side and not in_cell:
-        best = max(row_side, key=lambda p: (p.year or 0))
+        best = max(row_side, key=lambda p: p.year or 0)
         method_to_borrow = _evidence(best, f"adopt {row}, demonstrated here")
 
     return ResearchProposal(
@@ -322,7 +333,7 @@ def _rank_prior_art(
     row_side: list[FacetPaper], col_side: list[FacetPaper], limit: int = 6
 ) -> list[Evidence]:
     seen: dict[str, Evidence] = {}
-    for p in sorted(row_side + col_side, key=lambda p: (p.year or 0), reverse=True):
+    for p in sorted(row_side + col_side, key=lambda p: p.year or 0, reverse=True):
         if p.paper_id not in seen:
             seen[p.paper_id] = _evidence(p, "adjacent prior art")
     return list(seen.values())[:limit]

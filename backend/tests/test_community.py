@@ -9,8 +9,12 @@ def test_two_clusters_with_a_bridge_are_separated() -> None:
     # Two triangles (a,b,c) and (d,e,f) joined by a single weak bridge c-d.
     # Connected components would call this ONE community; modularity finds TWO.
     edges = [
-        ("a", "b", 1.0), ("b", "c", 1.0), ("a", "c", 1.0),
-        ("d", "e", 1.0), ("e", "f", 1.0), ("d", "f", 1.0),
+        ("a", "b", 1.0),
+        ("b", "c", 1.0),
+        ("a", "c", 1.0),
+        ("d", "e", 1.0),
+        ("e", "f", 1.0),
+        ("d", "f", 1.0),
         ("c", "d", 0.1),  # weak bridge
     ]
     comm = greedy_modularity_communities(["a", "b", "c", "d", "e", "f"], edges)

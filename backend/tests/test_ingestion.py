@@ -45,13 +45,20 @@ def test_dedup_by_content_hash() -> None:
 
 def test_dedup_by_doi_and_arxiv() -> None:
     idx = _idx()
-    assert idx.find_duplicate(PaperIdentity("x", "T", doi="https://doi.org/10.1234/ABCD.2024")).reason == "doi"
-    assert idx.find_duplicate(PaperIdentity("x", "T", arxiv_id="arXiv:2401.00001v3")).reason == "arxiv"
+    assert (
+        idx.find_duplicate(PaperIdentity("x", "T", doi="https://doi.org/10.1234/ABCD.2024")).reason
+        == "doi"
+    )
+    assert (
+        idx.find_duplicate(PaperIdentity("x", "T", arxiv_id="arXiv:2401.00001v3")).reason == "arxiv"
+    )
 
 
 def test_dedup_title_author_fuzzy() -> None:
     # Preprint vs published: slightly reformatted title, same authors.
-    cand = PaperIdentity("x", "Deep learning for copper-price forecasting", authors=["J. Doe", "C. Ng"])
+    cand = PaperIdentity(
+        "x", "Deep learning for copper-price forecasting", authors=["J. Doe", "C. Ng"]
+    )
     r = _idx().find_duplicate(cand)
     assert r.is_duplicate and r.reason == "title_author_fuzzy"
 
@@ -69,7 +76,11 @@ def _doc() -> ParsedDocument:
         abstract="This is the abstract about LSTM forecasting.",
         sections=[
             ParsedSection(section_id="s1", title="Introduction", text=long_body),
-            ParsedSection(section_id="s2", title="Methodology", text="We use an LSTM. It is trained on daily data."),
+            ParsedSection(
+                section_id="s2",
+                title="Methodology",
+                text="We use an LSTM. It is trained on daily data.",
+            ),
         ],
     )
 
@@ -92,6 +103,27 @@ def test_chunker_respects_sections_and_anchors() -> None:
     assert len({c.chunk_id for c in chunks}) == len(chunks)
 
 
+def test_chunker_hard_splits_oversized_sentence_after_a_short_one() -> None:
+    # Regression: an oversized sentence that arrives while a window is already open
+    # used to be appended whole and emitted over the char budget. It must be
+    # hard-split regardless of prior window state.
+    max_tokens = 64
+    max_chars = max_tokens * 4  # _CHARS_PER_TOKEN
+    giant = "x" * (max_chars * 3)  # one sentence, no sentence terminators
+    doc = ParsedDocument(
+        title="t",
+        sections=[
+            ParsedSection(section_id="s1", title="Body", text=f"A short lead sentence. {giant}."),
+        ],
+    )
+    chunks = chunk_document(doc, "p1", max_tokens=max_tokens, overlap_tokens=8, min_chars=1)
+    body = [c for c in chunks if c.section_id == "s1"]
+    assert body, "should produce chunks for the section"
+    assert all(len(c.text) <= max_chars for c in body), "no chunk may exceed the char budget"
+    # The giant sentence must have been split into several windows.
+    assert len(body) >= 3
+
+
 def test_chunker_deterministic_ids() -> None:
     a = chunk_document(_doc(), "p1")
     b = chunk_document(_doc(), "p1")
@@ -104,7 +136,8 @@ def test_chunker_carries_page_for_deep_linking() -> None:
         abstract="Abstract text about forecasting that is sufficiently long.",
         sections=[
             ParsedSection(
-                section_id="s1", title="Results",
+                section_id="s1",
+                title="Results",
                 text="We beat the ARIMA baseline on RMSE across all forecast horizons tested.",
                 page=7,
             ),
@@ -245,6 +278,7 @@ async def test_pipeline_cost_cap_pauses_resumably() -> None:
     ctx = PipelineContext(job=_job())
     job = await pipe.run(ctx)
     assert job.status == JobStatus.PAUSED
+    assert job.retryable is True
     assert job.stage == JobStage.PARSING  # completed parse, paused before extract
     assert job.error_code == "cost_cap_exceeded"
 
@@ -269,4 +303,26 @@ async def test_pipeline_failure_records_code() -> None:
     job = await pipe.run(PipelineContext(job=_job()))
     assert job.status == JobStatus.FAILED
     assert job.error_code == "corrupted_pdf"
+    assert job.retryable is False
     assert job.attempts == 1
+
+
+async def test_pipeline_persists_unexpected_failures_and_caps_retries() -> None:
+    async def crash(ctx: PipelineContext) -> None:
+        raise RuntimeError("database password must not reach the job API")
+
+    pipe = IngestionPipeline({JobStage.PARSING: crash}, max_attempts=2)
+    ctx = PipelineContext(job=_job())
+
+    first = await pipe.run(ctx)
+    assert first.status == JobStatus.FAILED
+    assert first.error_code == "internal_error"
+    assert first.error_message == "an unexpected ingestion stage failure occurred"
+    assert first.retryable is True
+    assert first.attempts == 1
+
+    second = await pipe.run(ctx)
+    assert second.status == JobStatus.FAILED
+    assert second.error_code == "internal_error"
+    assert second.retryable is False
+    assert second.attempts == 2

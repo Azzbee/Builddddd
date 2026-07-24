@@ -24,9 +24,14 @@ def load_prompt(version: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def prompt_hash(version: str) -> str:
-    """Short content hash of a prompt version, for drift detection."""
-    return hashlib.sha256(load_prompt(version).encode("utf-8")).hexdigest()[:12]
+def prompt_hash(version: str, extra: str = "") -> str:
+    """Short content hash of a prompt version, for drift detection.
+
+    ``extra`` folds render-time content into the hash - e.g. the schema skeleton
+    injected into the template - so a schema change is visible as a version change
+    even when the template file itself is untouched.
+    """
+    return hashlib.sha256((load_prompt(version) + extra).encode("utf-8")).hexdigest()[:12]
 
 
 def available_versions() -> list[str]:

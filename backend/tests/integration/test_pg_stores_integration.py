@@ -29,6 +29,7 @@ async def pool():  # type: ignore[no-untyped-def]
         await conn.execute(SCHEMA.read_text())
         await conn.execute("DELETE FROM pdf_blobs")
         await conn.execute("DELETE FROM chunks")
+        await conn.execute("DELETE FROM ingest_artifacts")
         await conn.execute("DELETE FROM ingest_jobs")
         await conn.execute("DELETE FROM watch_queue")
         await conn.execute("DELETE FROM digests")
@@ -37,6 +38,7 @@ async def pool():  # type: ignore[no-untyped-def]
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM pdf_blobs")
         await conn.execute("DELETE FROM chunks")
+        await conn.execute("DELETE FROM ingest_artifacts")
         await conn.execute("DELETE FROM ingest_jobs")
         await conn.execute("DELETE FROM watch_queue")
         await conn.execute("DELETE FROM digests")
@@ -46,15 +48,21 @@ async def pool():  # type: ignore[no-untyped-def]
 
 def _card(pid: str, title: str) -> PaperCard:
     return PaperCard(
-        paper_id=pid, title=title, authors=[Author(name="Jane Doe")], year=2024,
-        doi=f"10.1/{pid}", methodology=Methodology(approach_summary="LSTM"),
-        paper_type=PaperType.EMPIRICAL, methods_taxonomy=["LSTM"], confidence=0.9,
+        paper_id=pid,
+        title=title,
+        authors=[Author(name="Jane Doe")],
+        year=2024,
+        doi=f"10.1/{pid}",
+        methodology=Methodology(approach_summary="LSTM"),
+        paper_type=PaperType.EMPIRICAL,
+        methods_taxonomy=["LSTM"],
+        confidence=0.9,
     )
 
 
 async def test_card_roundtrip_and_corpus_index(pool) -> None:  # type: ignore[no-untyped-def]
     store = PgCardStore(pool, "ws")
-    await store.put_card(_card("p1", "Copper LSTM"))
+    await store.put_card(_card("p1", "Copper LSTM"), content_hash="sha256-one")
     await store.put_card(_card("p2", "Copper GRU"))
 
     got = await store.get_card("p1")
@@ -65,9 +73,39 @@ async def test_card_roundtrip_and_corpus_index(pool) -> None:  # type: ignore[no
 
     index = await store.corpus_index()
     dup = index.find_duplicate(
-        type(index.titles[0])(paper_id="x", title="Copper LSTM", authors=["Jane Doe"], doi="10.1/p1")
+        type(index.titles[0])(
+            paper_id="x", title="Copper LSTM", authors=["Jane Doe"], doi="10.1/p1"
+        )
     )
     assert dup.is_duplicate and dup.existing_paper_id == "p1"
+    by_hash = index.find_duplicate(
+        type(index.titles[0])(
+            paper_id="x", title="Different", authors=[], content_hash="sha256-one"
+        )
+    )
+    assert by_hash.is_duplicate and by_hash.reason == "content_hash"
+
+
+async def test_specter_persists_and_load_features_rehydrates(pool) -> None:  # type: ignore[no-untyped-def]
+    # The SPECTER vector must round-trip through pgvector and load_features must
+    # rebuild the per-paper feature bundle used for cross-restart incremental linking.
+    store = PgCardStore(pool, "ws")
+    vec = [0.1] * 768
+    await store.put_card(_card("p1", "Copper LSTM"), specter=vec)
+    await store.put_card(_card("p2", "Copper GRU"))  # no specter -> None
+
+    feats = {f.paper_id: f for f in await store.load_features()}
+    assert set(feats) == {"p1", "p2"}
+    assert feats["p1"].specter is not None
+    assert len(feats["p1"].specter) == 768
+    assert abs(feats["p1"].specter[0] - 0.1) < 1e-6
+    assert "lstm" in {m.lower() for m in feats["p1"].methods}
+    assert feats["p2"].specter is None
+
+    # A later put_card without a specter must not wipe the stored vector (COALESCE).
+    await store.put_card(_card("p1", "Copper LSTM v2"))
+    feats2 = {f.paper_id: f for f in await store.load_features()}
+    assert feats2["p1"].specter is not None and len(feats2["p1"].specter) == 768
 
 
 async def test_card_upsert_idempotent(pool) -> None:  # type: ignore[no-untyped-def]
@@ -81,20 +119,65 @@ async def test_card_upsert_idempotent(pool) -> None:  # type: ignore[no-untyped-
 async def test_job_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
     store = PgJobStore(pool, "ws")
     job = IngestJob(
-        job_id="j1", workspace_id="ws", source_type=SourceType.FILE, source_ref="a.pdf",
-        stage=JobStage.LINKING, status=JobStatus.SUCCEEDED, paper_id="p1", attempts=1, cost_usd=0.12,
+        job_id="j1",
+        workspace_id="ws",
+        source_type=SourceType.FILE,
+        source_ref="a.pdf",
+        stage=JobStage.LINKING,
+        status=JobStatus.SUCCEEDED,
+        paper_id="p1",
+        retryable=True,
+        attempts=1,
+        cost_usd=0.12,
     )
     await store.save(job)
     got = await store.get("j1")
     assert got is not None and got.status == JobStatus.SUCCEEDED and got.paper_id == "p1"
     assert got.stage == JobStage.LINKING
+    assert got.retryable is True
     assert len(await store.all_jobs()) == 1
+
+
+async def test_ingest_artifacts_roundtrip(pool) -> None:  # type: ignore[no-untyped-def]
+    from lattice.db.ingest_artifacts import IngestArtifacts, PgIngestArtifactStore
+    from lattice.ingestion.chunker import Chunk
+    from lattice.ingestion.models import ParsedDocument, ParsedSection, RegionType
+
+    jobs = PgJobStore(pool, "ws")
+    await jobs.save(
+        IngestJob(job_id="j-art", workspace_id="ws", source_type=SourceType.FILE, source_ref="a")
+    )
+    store = PgIngestArtifactStore(pool, "ws")
+    document = ParsedDocument(
+        title="Paper", sections=[ParsedSection(section_id="s1", title="Body", text="text")]
+    )
+    chunk = Chunk(
+        chunk_id="c1",
+        paper_id="p1",
+        section_id="s1",
+        section_title="Body",
+        ordinal=0,
+        text="source text",
+        char_start=0,
+        char_end=11,
+        region_type=RegionType.PROSE,
+    )
+    await store.save(
+        "j-art",
+        IngestArtifacts(raw_pdf=b"%PDF", document=document, chunks=[chunk], extra={"refs": ["x"]}),
+    )
+    saved = await store.get("j-art")
+    assert saved is not None
+    assert saved.raw_pdf == b"%PDF" and saved.document == document
+    assert saved.chunks == [chunk] and saved.extra == {"refs": ["x"]}
 
 
 async def test_job_workspace_isolation(pool) -> None:  # type: ignore[no-untyped-def]
     a = PgJobStore(pool, "wsA")
     b = PgJobStore(pool, "wsB")
-    await a.save(IngestJob(job_id="j1", workspace_id="wsA", source_type=SourceType.FILE, source_ref="a"))
+    await a.save(
+        IngestJob(job_id="j1", workspace_id="wsA", source_type=SourceType.FILE, source_ref="a")
+    )
     assert len(await a.all_jobs()) == 1
     assert len(await b.all_jobs()) == 0
 
@@ -160,3 +243,32 @@ async def test_digest_store_add_latest_history(pool) -> None:  # type: ignore[no
     latest = await store.latest()
     assert latest is not None and latest["markdown"] == "# two"
     assert len(await store.history()) == 2
+
+
+async def test_aspects_persist_and_superseded_excluded_from_features(pool) -> None:  # type: ignore[no-untyped-def]
+    # Aspect vectors round-trip through JSONB (full-fidelity rehydration), and a
+    # superseded paper is excluded from load_features but stays retrievable.
+    store = PgCardStore(pool, "ws")
+    aspects = {"problem": [0.1] * 4, "methodology": [0.2] * 4, "results": [0.3] * 4}
+    await store.put_card(_card("p1", "Preprint LSTM"), specter=[0.1] * 768, aspects=aspects)
+    await store.put_card(_card("p2", "Published LSTM"), specter=[0.2] * 768)
+
+    feats = {f.paper_id: f for f in await store.load_features()}
+    assert feats["p1"].aspects is not None
+    assert feats["p1"].aspects["methodology"] == [0.2] * 4
+    # A later card update without aspects must not wipe them (COALESCE).
+    await store.put_card(_card("p1", "Preprint LSTM v2"))
+    feats2 = {f.paper_id: f for f in await store.load_features()}
+    assert feats2["p1"].aspects is not None
+
+    # References round-trip and external ids rebuild from the card.
+    await store.put_card(_card("p3", "Citing paper"), references=["https://openalex.org/W1"])
+    feats3 = {f.paper_id: f for f in await store.load_features()}
+    assert feats3["p3"].references == frozenset({"https://openalex.org/W1"})
+    assert "DOI:10.1/p3" in feats3["p3"].external_ids
+
+    await store.mark_superseded("p1", "p2")
+    assert await store.superseded_map() == {"p1": "p2"}
+    remaining = {f.paper_id for f in await store.load_features()}
+    assert remaining == {"p2", "p3"}, "superseded paper must not rehydrate"
+    assert await store.get("p1") is not None  # supersede, never delete

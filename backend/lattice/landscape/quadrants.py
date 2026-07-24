@@ -24,10 +24,44 @@ from lattice.graph.similarity import cosine
 
 # --------------------------------------------------------------------------- claim clustering
 _CLAIM_STOP = {
-    "the", "a", "an", "of", "for", "on", "in", "with", "to", "and", "or", "is",
-    "are", "than", "over", "versus", "vs", "that", "this", "these", "show", "shows",
-    "showed", "we", "our", "it", "its", "by", "at", "as", "be", "can", "using",
-    "significantly", "results", "result", "improvement", "improvements",
+    "the",
+    "a",
+    "an",
+    "of",
+    "for",
+    "on",
+    "in",
+    "with",
+    "to",
+    "and",
+    "or",
+    "is",
+    "are",
+    "than",
+    "over",
+    "versus",
+    "vs",
+    "that",
+    "this",
+    "these",
+    "show",
+    "shows",
+    "showed",
+    "we",
+    "our",
+    "it",
+    "its",
+    "by",
+    "at",
+    "as",
+    "be",
+    "can",
+    "using",
+    "significantly",
+    "results",
+    "result",
+    "improvement",
+    "improvements",
 }
 
 
@@ -88,7 +122,10 @@ def cluster_claims(
                 cl.canonical = claim
         else:
             clusters.append(
-                (set(toks), ClaimCluster(canonical=claim, members=[claim], papers=[sp], polarity=pol))
+                (
+                    set(toks),
+                    ClaimCluster(canonical=claim, members=[claim], papers=[sp], polarity=pol),
+                )
             )
     return [cl for _toks, cl in clusters]
 
@@ -272,9 +309,10 @@ def cross_community_transfer(
             if sim is None or sim < sim_threshold:
                 continue
             dist = distance_fn(src_paper, tgt_paper)
-            if dist > min_distance:
-                candidates.append(
-                    TransferCandidate(method, src_paper, tgt_paper, sim, dist)
-                )
+            # "at least min_distance apart" -> inclusive. A pair exactly min_distance
+            # hops away qualifies (previously `> min_distance` silently required
+            # min_distance + 1, contradicting the parameter name).
+            if dist >= min_distance:
+                candidates.append(TransferCandidate(method, src_paper, tgt_paper, sim, dist))
     candidates.sort(key=lambda c: c.similarity, reverse=True)
     return candidates

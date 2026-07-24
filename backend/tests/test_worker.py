@@ -22,9 +22,14 @@ def _low_watch_floor(monkeypatch: pytest.MonkeyPatch):
 
 
 async def _demo_ctx() -> dict[str, object]:
-    container = build_container(Settings(demo_mode=True))
+    settings = Settings(demo_mode=True)
+    container = build_container(settings)
     await load_demo(container)
-    return {"container": container}
+    return {
+        "container": container,
+        "settings": settings,
+        "containers": {settings.workspace_id: container},
+    }
 
 
 class FakeWatcher:
@@ -79,10 +84,47 @@ async def test_generate_weekly_digest_persists() -> None:
     assert await ctx["container"].digests.latest() is not None  # type: ignore[attr-defined]
 
 
-async def test_ingest_pdf_task_runs() -> None:
+async def test_ingest_job_task_runs_from_staged_source() -> None:
     import lattice.worker as worker
     from lattice.demo import demo_pdf_bytes
 
     ctx = await _demo_ctx()
-    result = await worker.ingest_pdf_task(ctx, "lstm_copper.pdf", demo_pdf_bytes("lstm_copper.pdf"))
+    container = ctx["container"]
+    job = await container.ingestion.stage_pdf(  # type: ignore[attr-defined]
+        "new-paper.pdf", demo_pdf_bytes("lstm_copper.pdf")
+    )
+    result = await worker.ingest_job_task(ctx, "default", job.job_id)
     assert result["status"] in ("succeeded", "duplicate")
+
+
+async def test_ingest_job_task_schedules_retryable_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import lattice.worker as worker
+    from arq import Retry
+    from lattice.ingestion.models import IngestJob, JobStatus, SourceType
+
+    failed = IngestJob(
+        job_id="retry-me",
+        source_type=SourceType.FILE,
+        source_ref="paper.pdf",
+        status=JobStatus.FAILED,
+        error_code="parser_timeout",
+        retryable=True,
+        attempts=1,
+    )
+
+    class FailedIngestion:
+        async def resume_job(self, job_id: str) -> IngestJob:
+            assert job_id == failed.job_id
+            return failed
+
+    class FailedContainer:
+        settings = Settings(ingest_max_attempts=3)
+        ingestion = FailedIngestion()
+
+    monkeypatch.setattr(worker, "_container", lambda _ctx, _workspace: FailedContainer())
+
+    with pytest.raises(Retry) as retry:
+        await worker.ingest_job_task({}, "default", failed.job_id)
+    assert retry.value.defer_score == 1000

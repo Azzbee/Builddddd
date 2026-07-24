@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from lattice.extraction.schemas import PaperCard
 from lattice.ingestion.dedup import CorpusIndex, PaperIdentity
@@ -16,14 +16,47 @@ class CardStore(Protocol):
     async def put_card(self, card: PaperCard) -> None: ...
 
 
+class StoredFeatures(NamedTuple):
+    """The persisted, per-paper feature bundle used to rehydrate incremental linking.
+
+    Everything here survives a process restart: the SPECTER paper vector, the
+    normalized method/dataset sets, the per-aspect embeddings (problem /
+    methodology / results), the citation reference set, and the paper's own
+    external ids. Rehydrated papers therefore link at full similarity fidelity
+    (sem + methodology-section + method-tags + dataset + bibliographic coupling),
+    direct-citation detection keeps working, and the epistemic quadrants keep
+    their aspect vectors across restarts.
+    """
+
+    paper_id: str
+    specter: list[float] | None
+    methods: set[str]
+    datasets: set[str]
+    aspects: dict[str, list[float]] | None = None
+    #: External ids this paper cites (bibliographic coupling / direct citations).
+    references: frozenset[str] = frozenset()
+    #: Every id this paper is known by, in reference-list form (card.external_ids).
+    external_ids: frozenset[str] = frozenset()
+
+
 class CorpusStore(Protocol):
     """Full card store surface used by the ingestion service (in-memory or Postgres)."""
 
     async def get_card(self, paper_id: str) -> dict[str, Any] | None: ...
-    async def put_card(self, card: PaperCard) -> None: ...
+    async def put_card(
+        self,
+        card: PaperCard,
+        specter: list[float] | None = None,
+        aspects: dict[str, list[float]] | None = None,
+        references: list[str] | None = None,
+        content_hash: str | None = None,
+    ) -> None: ...
     async def get(self, paper_id: str) -> PaperCard | None: ...
     async def all_cards(self) -> list[PaperCard]: ...
     async def corpus_index(self) -> CorpusIndex: ...
+    async def load_features(self) -> list[StoredFeatures]: ...
+    async def mark_superseded(self, paper_id: str, superseded_by: str) -> None: ...
+    async def superseded_map(self) -> dict[str, str]: ...
 
 
 class JobStore(Protocol):
@@ -35,9 +68,29 @@ class JobStore(Protocol):
 class InMemoryCardStore:
     def __init__(self) -> None:
         self._cards: dict[str, PaperCard] = {}
+        self._specters: dict[str, list[float] | None] = {}
+        self._aspects: dict[str, dict[str, list[float]]] = {}
+        self._references: dict[str, list[str]] = {}
+        self._content_hashes: dict[str, str] = {}
+        self._superseded: dict[str, str] = {}  # paper_id -> superseding paper_id
 
-    async def put_card(self, card: PaperCard) -> None:
+    async def put_card(
+        self,
+        card: PaperCard,
+        specter: list[float] | None = None,
+        aspects: dict[str, list[float]] | None = None,
+        references: list[str] | None = None,
+        content_hash: str | None = None,
+    ) -> None:
         self._cards[card.paper_id] = card
+        if specter is not None:
+            self._specters[card.paper_id] = specter
+        if aspects is not None:
+            self._aspects[card.paper_id] = aspects
+        if references is not None:
+            self._references[card.paper_id] = list(references)
+        if content_hash is not None:
+            self._content_hashes[card.paper_id] = content_hash
 
     async def get_card(self, paper_id: str) -> dict[str, Any] | None:
         card = self._cards.get(paper_id)
@@ -49,6 +102,31 @@ class InMemoryCardStore:
     async def all_cards(self) -> list[PaperCard]:
         return list(self._cards.values())
 
+    async def load_features(self) -> list[StoredFeatures]:
+        # Superseded papers are excluded: they must not re-enter the linking
+        # candidate pool after a restart (their edges are invalidated, and new
+        # papers should link to the superseding version instead).
+        return [
+            StoredFeatures(
+                paper_id=c.paper_id,
+                specter=self._specters.get(c.paper_id),
+                methods=c.normalized_methods,
+                datasets=c.normalized_datasets,
+                aspects=self._aspects.get(c.paper_id),
+                references=frozenset(self._references.get(c.paper_id, [])),
+                external_ids=frozenset(c.external_ids),
+            )
+            for c in self._cards.values()
+            if c.paper_id not in self._superseded
+        ]
+
+    async def mark_superseded(self, paper_id: str, superseded_by: str) -> None:
+        self._superseded[paper_id] = superseded_by
+
+    async def superseded_map(self) -> dict[str, str]:
+        """paper_id -> superseding paper_id, for every superseded paper."""
+        return dict(self._superseded)
+
     async def corpus_index(self) -> CorpusIndex:
         idents = [
             PaperIdentity(
@@ -57,6 +135,7 @@ class InMemoryCardStore:
                 authors=[a.name for a in c.authors],
                 doi=c.doi,
                 arxiv_id=c.arxiv_id,
+                content_hash=self._content_hashes.get(c.paper_id),
             )
             for c in self._cards.values()
         ]

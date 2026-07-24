@@ -20,10 +20,10 @@ from lattice.graph.store import GraphStore
 
 
 class GraphReader(Protocol):
-    async def snapshot(
-        self, workspace_id: str, as_of_year: int | None = None
-    ) -> GraphSnapshot: ...
-    async def neighbors(self, workspace_id: str, paper_id: str, min_weight: float) -> list[GraphEdge]: ...
+    async def snapshot(self, workspace_id: str, as_of_year: int | None = None) -> GraphSnapshot: ...
+    async def neighbors(
+        self, workspace_id: str, paper_id: str, min_weight: float
+    ) -> list[GraphEdge]: ...
     async def claim_relations(self, workspace_id: str, relation: str | None) -> list[ClaimEdge]: ...
     async def lineage(self, workspace_id: str, method: str) -> Lineage: ...
 
@@ -42,16 +42,15 @@ class Neo4jGraphReader:
     def __init__(self, store: GraphStore) -> None:
         self._store = store
 
-    async def snapshot(
-        self, workspace_id: str, as_of_year: int | None = None
-    ) -> GraphSnapshot:
+    async def snapshot(self, workspace_id: str, as_of_year: int | None = None) -> GraphSnapshot:
         # Time-travel: restrict to papers published up to ``as_of_year`` (and edges
         # whose both endpoints qualify). Community/centrality stay as the precomputed
         # current values; the in-memory path recomputes them on the subgraph.
         node_rows = await self._store.execute(
             """
             MATCH (p:Paper {workspace_id: $ws})
-            WHERE $yr IS NULL OR (p.year IS NOT NULL AND p.year <= $yr)
+            WHERE p.superseded_by IS NULL
+              AND ($yr IS NULL OR (p.year IS NOT NULL AND p.year <= $yr))
             RETURN p.id AS id, p.title AS title, p.year AS year,
                    coalesce(p.community, 0) AS community,
                    coalesce(p.pagerank, 0.0) AS centrality,
@@ -75,7 +74,9 @@ class Neo4jGraphReader:
         max_c = max((float(r["centrality"]) for r in node_rows), default=1.0) or 1.0
         nodes = [
             GraphNode(
-                id=r["id"], title=r["title"], year=r["year"],
+                id=r["id"],
+                title=r["title"],
+                year=r["year"],
                 community=int(r["community"]),
                 centrality=round(float(r["centrality"]) / max_c, 4),
                 needs_review=bool(r["needs_review"]),
@@ -84,8 +85,10 @@ class Neo4jGraphReader:
         ]
         edges = [
             GraphEdge(
-                source=r["source"], target=r["target"],
-                weight=round(float(r["weight"]), 4), components=_components(r["components"]),
+                source=r["source"],
+                target=r["target"],
+                weight=round(float(r["weight"]), 4),
+                components=_components(r["components"]),
             )
             for r in edge_rows
         ]
@@ -105,7 +108,9 @@ class Neo4jGraphReader:
             {"ws": workspace_id, "pid": paper_id, "minw": min_weight},
         )
         return [
-            GraphEdge(r["source"], r["target"], round(float(r["weight"]), 4), _components(r["components"]))
+            GraphEdge(
+                r["source"], r["target"], round(float(r["weight"]), 4), _components(r["components"])
+            )
             for r in rows
         ]
 
@@ -114,7 +119,9 @@ class Neo4jGraphReader:
     ) -> list[ClaimEdge]:
         rel_filter = ""
         if relation:
-            rel_filter = f":{relation}" if relation in ("SUPPORTS", "CONTRADICTS", "EXTENDS") else ""
+            rel_filter = (
+                f":{relation}" if relation in ("SUPPORTS", "CONTRADICTS", "EXTENDS") else ""
+            )
         rows = await self._store.execute(
             f"""
             MATCH (a:Claim {{workspace_id: $ws}})-[r{rel_filter}]->(b:Claim)
@@ -130,10 +137,16 @@ class Neo4jGraphReader:
         )
         return [
             ClaimEdge(
-                source_id=r["sid"], target_id=r["tid"], source_paper=r["sp"], target_paper=r["tp"],
-                relation=ClaimRelation(r["relation"]), confidence=float(r["confidence"]),
-                source_text=r["stext"] or "", target_text=r["ttext"] or "",
-                source_evidence=r["sev"] or "", target_evidence=r["tev"] or "",
+                source_id=r["sid"],
+                target_id=r["tid"],
+                source_paper=r["sp"],
+                target_paper=r["tp"],
+                relation=ClaimRelation(r["relation"]),
+                confidence=float(r["confidence"]),
+                source_text=r["stext"] or "",
+                target_text=r["ttext"] or "",
+                source_evidence=r["sev"] or "",
+                target_evidence=r["tev"] or "",
             )
             for r in rows
         ]
@@ -142,7 +155,7 @@ class Neo4jGraphReader:
         node_rows = await self._store.execute(
             """
             MATCH (p:Paper {workspace_id: $ws})-[:USES_METHOD]->(m:Method)
-            WHERE toLower(m.name) = toLower($method)
+            WHERE toLower(m.name) = toLower($method) AND p.superseded_by IS NULL
             RETURN p.id AS id, p.title AS title, p.year AS year
             """,
             {"ws": workspace_id, "method": method},
@@ -168,7 +181,11 @@ class Neo4jGraphReader:
             if citing not in members or cited not in members:
                 continue
             a, b = by_id[cited], by_id[citing]
-            older, newer = (a.paper_id, b.paper_id) if (a.year or 0) <= (b.year or 0) else (b.paper_id, a.paper_id)
+            older, newer = (
+                (a.paper_id, b.paper_id)
+                if (a.year or 0) <= (b.year or 0)
+                else (b.paper_id, a.paper_id)
+            )
             if (older, newer) in seen:
                 continue
             seen.add((older, newer))

@@ -36,7 +36,5 @@ def test_no_neighbors_zero_neighborhood() -> None:
 
 
 def test_rank_respects_limit() -> None:
-    candidates = [
-        ReadingCandidate(f"p{i}", f"P{i}", {"m"}, [(0.5, 0.5)]) for i in range(30)
-    ]
+    candidates = [ReadingCandidate(f"p{i}", f"P{i}", {"m"}, [(0.5, 0.5)]) for i in range(30)]
     assert len(rank_reading_queue(candidates, set(), limit=5)) == 5

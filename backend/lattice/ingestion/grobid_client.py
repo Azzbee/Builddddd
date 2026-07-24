@@ -9,6 +9,7 @@ it pure makes it testable against fixture XML with no GROBID server.
 from __future__ import annotations
 
 import re
+from typing import Protocol
 
 import httpx
 
@@ -25,6 +26,12 @@ from lattice.ingestion.models import (
 TEI_NS = "http://www.tei-c.org/ns/1.0"
 _NS = {"t": TEI_NS}
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
+
+
+class _FindableElement(Protocol):
+    def findall(self, path: str, namespaces: dict[str, str]) -> list[object]: ...
+
+    def find(self, path: str, namespaces: dict[str, str]) -> object | None: ...
 
 
 def _text(el: object) -> str:
@@ -59,13 +66,9 @@ def _first_year(text: str) -> int | None:
     return int(m.group(0)) if m else None
 
 
-def _persname(el: object) -> str:
-    from lxml import etree  # noqa: F401
-
-    forenames = el.findall(".//t:persName/t:forename", _NS) or el.findall(  # type: ignore[attr-defined]
-        ".//t:forename", _NS
-    )
-    surname = el.find(".//t:surname", _NS)  # type: ignore[attr-defined]
+def _persname(el: _FindableElement) -> str:
+    forenames = el.findall(".//t:persName/t:forename", _NS) or el.findall(".//t:forename", _NS)
+    surname = el.find(".//t:surname", _NS)
     parts = [_text(f) for f in forenames] + ([_text(surname)] if surname is not None else [])
     return " ".join(p for p in parts if p)
 
@@ -148,9 +151,7 @@ def parse_tei(xml: str | bytes) -> ParsedDocument:
         ryear = None
         if rdate is not None:
             ryear = _first_year(rdate.get("when", "")) or _first_year(_text(rdate))
-        rauthors = [
-            _persname(a) for a in bibl.findall(".//t:author", _NS) if _persname(a)
-        ]
+        rauthors = [_persname(a) for a in bibl.findall(".//t:author", _NS) if _persname(a)]
         if rtitle or rdoi or rarxiv:
             references.append(
                 ParsedReference(
@@ -183,7 +184,9 @@ class GrobidClient:
         self._settings = settings
         self._client = client
 
-    async def process_fulltext(self, pdf_bytes: bytes, filename: str = "paper.pdf") -> ParsedDocument:
+    async def process_fulltext(
+        self, pdf_bytes: bytes, filename: str = "paper.pdf"
+    ) -> ParsedDocument:
         client = self._client or httpx.AsyncClient(timeout=self._settings.timeout_s)
         owns = self._client is None
         url = f"{self._settings.url.rstrip('/')}/api/processFulltextDocument"
