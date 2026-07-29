@@ -260,8 +260,7 @@ class DemoParser:
 
 
 class DemoLLM:
-    """Deterministic LLM: serves canned card content for extraction, and a graceful
-    message for the chat agent (real chat needs a provider)."""
+    """Deterministic extraction and grounded chat responses for offline demos."""
 
     def __init__(self) -> None:
         self._content = {p.title: _card_content(p) for p in DEMO_CORPUS}
@@ -272,21 +271,65 @@ class DemoLLM:
         system = next((m.content for m in messages if m.role == "system"), "")
         user = "\n".join(m.content for m in messages if m.role == "user")
         if "research assistant" in system:
-            return LLMResponse(
-                text=json.dumps(
-                    {
-                        "answer": "Demo mode is offline. Set ANTHROPIC_API_KEY and disable "
-                        "LATTICE_DEMO to enable the chat agent.",
-                        "citations": [],
-                        "confidence": 0.0,
-                    }
-                ),
-                model=model,
-            )
+            return self._chat_response(model, messages)
         for title, content in self._content.items():
             if title in user:
                 return LLMResponse(text=content, input_tokens=200, output_tokens=120, model=model)
         return LLMResponse(text=_card_content(DEMO_CORPUS[0]), model=model)
+
+    def _chat_response(self, model: str, messages: list[LLMMessage]) -> LLMResponse:
+        last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        if last_user.startswith("Tool search_chunks result:\n"):
+            result = json.loads(last_user.partition("\n")[2])
+            chunks = []
+            seen_papers: set[str] = set()
+            for chunk in result.get("chunks") or []:
+                paper_id = str(chunk.get("paper_id") or "")
+                if not paper_id or paper_id in seen_papers:
+                    continue
+                seen_papers.add(paper_id)
+                chunks.append(chunk)
+                if len(chunks) == 3:
+                    break
+            if not chunks:
+                payload = {
+                    "answer": "I don't have enough evidence in the demo corpus to answer that.",
+                    "citations": [],
+                    "confidence": 0.1,
+                }
+            else:
+                evidence = []
+                citations = []
+                for marker, chunk in enumerate(chunks, 1):
+                    text = " ".join(str(chunk.get("text") or "").split())
+                    if len(text) > 220:
+                        text = f"{text[:217].rstrip()}..."
+                    evidence.append(f"{text} [{marker}]")
+                    citations.append(
+                        {
+                            "paper_id": chunk.get("paper_id"),
+                            "evidence_location": chunk.get("evidence_location"),
+                        }
+                    )
+                payload = {
+                    "answer": "The strongest matching evidence is: " + " ".join(evidence),
+                    "citations": citations,
+                    "confidence": 0.9,
+                }
+            return LLMResponse(
+                text=json.dumps(payload),
+                input_tokens=180,
+                output_tokens=120,
+                model=model,
+            )
+
+        payload = {"action": "search_chunks", "args": {"query": last_user, "k": 3}}
+        return LLMResponse(
+            text=json.dumps(payload),
+            input_tokens=120,
+            output_tokens=30,
+            model=model,
+        )
 
 
 def demo_pdf_bytes(filename: str) -> bytes:

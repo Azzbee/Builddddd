@@ -186,6 +186,42 @@ async def test_agent_streams_events() -> None:
     assert types[-1] == "final"
 
 
+async def test_demo_agent_retrieves_and_cites_corpus_evidence() -> None:
+    from lattice.api.deps import build_container
+    from lattice.config import Settings
+    from lattice.demo import load_demo
+
+    container = build_container(Settings(demo_mode=True))
+    await load_demo(container)
+
+    result = await container.make_agent().run("Which methods improve copper forecasting?")
+
+    assert result.answer.startswith("The strongest matching evidence is:")
+    assert result.confidence == 0.9
+    assert not result.abstained
+    assert result.citations
+    assert result.answer.count("[") == len(result.citations)
+    assert result.tool_calls[0].name == "search_chunks"
+
+
+async def test_demo_agent_handles_disagreement_query_with_citations() -> None:
+    from lattice.api.deps import build_container
+    from lattice.config import Settings
+    from lattice.demo import load_demo
+
+    container = build_container(Settings(demo_mode=True))
+    await load_demo(container)
+
+    result = await container.make_agent().run("Where do transformer papers disagree?")
+
+    assert result.answer.startswith("The strongest matching evidence is:")
+    assert result.confidence == 0.9
+    assert not result.abstained
+    assert result.citations
+    assert result.answer.count("[") == len(result.citations)
+    assert result.tool_calls[0].name == "search_chunks"
+
+
 async def test_agent_respects_tool_call_ceiling() -> None:
     tb = _toolbox(hits=[ChunkHit("c", "p1", "P", "S", "t", 0.5, "S")])
     # Always returns a tool action, never a final answer.

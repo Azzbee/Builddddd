@@ -37,7 +37,8 @@ and restart it.
 
 Demo mode (`LATTICE_DEMO_MODE=true`) wires deterministic models and loads a small,
 deliberately interconnected corpus at startup, so the graph, contradictions,
-quadrants, momentum, lineage, and reading queue are all populated immediately.
+quadrants, momentum, lineage, reading queue, and cited chat answers are all
+populated immediately.
 
 ## Local model (real papers, zero API cost)
 
