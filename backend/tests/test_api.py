@@ -219,6 +219,15 @@ def test_arxiv_ingest_streams_a_valid_pdf(client: TestClient) -> None:
 
 
 @respx.mock
+def test_arxiv_ingest_rejects_invalid_id_without_network(client: TestClient) -> None:
+    response = client.post("/ingest/arxiv", json={"arxiv_id": "not an arxiv id"})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "invalid arxiv id"}
+    assert not respx.calls
+
+
+@respx.mock
 def test_arxiv_ingest_rejects_oversized_stream(client: TestClient) -> None:
     from lattice.api.deps import get_container
 

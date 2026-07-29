@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from pydantic import BaseModel
 
 from lattice.api.deps import Container, get_container, require_auth
-from lattice.core.hashing import normalize_arxiv
+from lattice.core.hashing import is_valid_arxiv_id, normalize_arxiv
 from lattice.ingestion.dispatch import JobQueueUnavailable, JobRetryRejected
 from lattice.ingestion.models import IngestJob
 
@@ -79,8 +79,9 @@ async def ingest_arxiv(
     c: Container = Depends(get_container),
 ) -> dict[str, object]:
     arxiv_id = normalize_arxiv(req.arxiv_id)
-    if not arxiv_id:
+    if not is_valid_arxiv_id(arxiv_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid arxiv id")
+    assert arxiv_id is not None
     url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
     cap = c.settings.max_upload_mb * 1024 * 1024
     try:

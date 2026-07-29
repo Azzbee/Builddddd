@@ -60,3 +60,14 @@ def normalize_arxiv(arxiv_id: str | None) -> str | None:
     aid = re.sub(r"\.pdf$", "", aid)
     aid = re.sub(r"v\d+$", "", aid)  # drop version so v1/v2 dedupe together
     return aid or None
+
+
+_ARXIV_ID = re.compile(
+    r"(?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}|[a-z][a-z0-9.-]*/\d{2}(?:0[1-9]|1[0-2])\d{3})"
+)
+
+
+def is_valid_arxiv_id(arxiv_id: str | None) -> bool:
+    """Return whether a normalized id uses a modern or legacy arXiv format."""
+    normalized = normalize_arxiv(arxiv_id)
+    return normalized is not None and _ARXIV_ID.fullmatch(normalized) is not None

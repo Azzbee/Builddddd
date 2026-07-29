@@ -8,6 +8,7 @@ from lattice.core.cost import CostTracker, Usage, estimate_cost, price_for
 from lattice.core.errors import CostCapExceeded
 from lattice.core.hashing import (
     content_hash,
+    is_valid_arxiv_id,
     normalize_arxiv,
     normalize_doi,
     normalize_text,
@@ -89,6 +90,24 @@ def test_normalize_doi(raw: str | None, expected: str | None) -> None:
 )
 def test_normalize_arxiv(raw: str | None, expected: str | None) -> None:
     assert normalize_arxiv(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2401.01234", True),
+        ("arXiv:0704.0001v3", True),
+        ("https://arxiv.org/abs/hep-th/9901001", True),
+        ("math.GT/0309136", True),
+        ("2400.01234", False),
+        ("2401.123", False),
+        ("not an arxiv id", False),
+        ("https://example.com/2401.01234", False),
+        (None, False),
+    ],
+)
+def test_validate_arxiv_id(raw: str | None, expected: bool) -> None:
+    assert is_valid_arxiv_id(raw) is expected
 
 
 def test_price_and_cost_estimation() -> None:
