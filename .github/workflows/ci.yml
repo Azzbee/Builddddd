@@ -120,3 +120,5 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm audit --audit-level=moderate
+      - name: Build production container
+        run: docker build --tag lattice-web:ci .
