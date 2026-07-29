@@ -5,6 +5,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
     PATH="/app/.venv/bin:$PATH"
 
 # uv from the official distroless image, pinned for reproducible builds.

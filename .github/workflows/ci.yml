@@ -38,6 +38,8 @@ jobs:
         run: |
           uv export --locked --all-extras --no-emit-project --output-file /tmp/lattice-requirements.txt
           uv run pip-audit --disable-pip --require-hashes --requirement /tmp/lattice-requirements.txt
+      - name: Build production container
+        run: docker build --tag lattice-backend:ci .
 
   eval:
     name: Evals (extraction / retrieval / edge quality)
