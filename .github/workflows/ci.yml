@@ -127,3 +127,16 @@ jobs:
       - run: npm audit --audit-level=moderate
       - name: Build production container
         run: docker build --tag lattice-web:ci .
+      - name: Smoke-test production container
+        run: |
+          docker run --detach --name lattice-web-ci --publish 3300:3000 lattice-web:ci
+          trap 'docker rm --force lattice-web-ci' EXIT
+          for attempt in {1..20}; do
+            curl --fail --silent --head http://127.0.0.1:3300/ > /tmp/web-headers.txt && break
+            sleep 1
+          done
+          grep --ignore-case '^content-security-policy:' /tmp/web-headers.txt
+          if grep --ignore-case '^x-powered-by:' /tmp/web-headers.txt; then
+            echo "production server disclosed the framework"
+            exit 1
+          fi

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import nextConfig, { securityHeaders } from "../next.config";
 
 describe("web security headers", () => {
+  it("builds a traced standalone production server", () => {
+    expect(nextConfig.output).toBe("standalone");
+  });
+
   it("does not advertise the application framework", () => {
     expect(nextConfig.poweredByHeader).toBe(false);
   });
