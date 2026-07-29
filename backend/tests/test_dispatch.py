@@ -46,7 +46,7 @@ async def test_arq_dispatch_stages_pdf_and_enqueues_only_identifiers() -> None:
     assert demo_pdf_bytes("lstm_copper.pdf") not in redis.calls[0][1]
 
 
-async def test_arq_retry_is_bounded_and_uses_new_attempt_id() -> None:
+async def test_arq_retry_is_bounded_and_uses_fresh_queue_id() -> None:
     settings = Settings(demo_mode=True, ingest_max_attempts=2)
     container = build_container(settings)
     redis = FakeRedis()
@@ -59,7 +59,7 @@ async def test_arq_retry_is_bounded_and_uses_new_attempt_id() -> None:
 
     retried = await dispatcher.retry(job.job_id)
     assert retried is not None and retried.status == JobStatus.QUEUED
-    assert redis.calls[0][2]["_job_id"] == f"ingest:{job.job_id}:1"
+    assert redis.calls[0][2]["_job_id"] is None
 
     retried.status = JobStatus.FAILED
     retried.retryable = True
@@ -68,6 +68,22 @@ async def test_arq_retry_is_bounded_and_uses_new_attempt_id() -> None:
     with pytest.raises(JobRetryRejected, match="attempt limit"):
         await dispatcher.retry(job.job_id)
     assert len(redis.calls) == 1
+
+
+async def test_arq_retry_of_paused_job_always_uses_fresh_queue_id() -> None:
+    container = build_container(Settings(demo_mode=True))
+    redis = FakeRedis()
+    dispatcher = ArqIngestionDispatcher(container.ingestion, redis)
+    job = await container.ingestion.stage_pdf("paper.pdf", demo_pdf_bytes("lstm_copper.pdf"))
+
+    for _ in range(2):
+        job.status = JobStatus.PAUSED
+        job.retryable = True
+        await container.jobs.save(job)
+        retried = await dispatcher.retry(job.job_id)
+        assert retried is not None and retried.status == JobStatus.QUEUED
+
+    assert [call[2]["_job_id"] for call in redis.calls] == [None, None]
 
 
 async def test_arq_retry_rejects_terminal_failure() -> None:

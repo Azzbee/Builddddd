@@ -23,7 +23,7 @@ class JobQueue(Protocol):
         workspace_id: str,
         job_id: str,
         *,
-        _job_id: str,
+        _job_id: str | None,
     ) -> object: ...
 
 
@@ -72,7 +72,7 @@ class ArqIngestionDispatcher:
         job = await self.service.stage_pdf(source_ref, pdf_bytes)
         if job.status != JobStatus.QUEUED:
             return job
-        await self._enqueue_or_fail(job)
+        await self._enqueue_or_fail(job, deduplicate=True)
         return job
 
     async def retry(self, job_id: str) -> IngestJob | None:
@@ -85,12 +85,15 @@ class ArqIngestionDispatcher:
         job.error_message = None
         job.retryable = False
         await self.service.jobs.save(job)
-        await self._enqueue_or_fail(job)
+        # arq retains completed result keys for a while and rejects a new job
+        # with the same explicit ID. Let arq create a fresh queue ID for every
+        # manual retry, including cost-cap pauses that do not increment attempts.
+        await self._enqueue_or_fail(job, deduplicate=False)
         return job
 
-    async def _enqueue_or_fail(self, job: IngestJob) -> None:
+    async def _enqueue_or_fail(self, job: IngestJob, *, deduplicate: bool) -> None:
         try:
-            await self._enqueue(job)
+            await self._enqueue(job, deduplicate=deduplicate)
         except Exception as exc:
             job.status = JobStatus.FAILED
             job.error_code = "queue_unavailable"
@@ -99,8 +102,8 @@ class ArqIngestionDispatcher:
             await self.service.jobs.save(job)
             raise JobQueueUnavailable(job.error_message) from exc
 
-    async def _enqueue(self, job: IngestJob) -> None:
-        queue_id = f"ingest:{job.job_id}:{job.attempts}"
+    async def _enqueue(self, job: IngestJob, *, deduplicate: bool) -> None:
+        queue_id = f"ingest:{job.job_id}:{job.attempts}" if deduplicate else None
         await self.redis.enqueue_job(
             "ingest_job_task",
             job.workspace_id,
