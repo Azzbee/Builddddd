@@ -84,6 +84,20 @@ async def test_generate_weekly_digest_persists() -> None:
     assert await ctx["container"].digests.latest() is not None  # type: ignore[attr-defined]
 
 
+def test_worker_settings_exposes_arq_redis_settings_value() -> None:
+    from urllib.parse import urlparse
+
+    import lattice.worker as worker
+    from arq.connections import RedisSettings
+    from lattice.config import get_settings
+
+    redis_settings = worker.WorkerSettings.redis_settings
+    configured = urlparse(get_settings().redis.url)
+    assert isinstance(redis_settings, RedisSettings)
+    assert redis_settings.host == configured.hostname
+    assert redis_settings.port == (configured.port or 6379)
+
+
 async def test_ingest_job_task_runs_from_staged_source() -> None:
     import lattice.worker as worker
     from lattice.demo import demo_pdf_bytes

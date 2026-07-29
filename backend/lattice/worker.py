@@ -119,6 +119,12 @@ def _cron_jobs() -> list[Any]:
     ]
 
 
+def _redis_settings() -> Any:
+    from arq.connections import RedisSettings
+
+    return RedisSettings.from_dsn(get_settings().redis.url)
+
+
 class WorkerSettings:
     """arq entrypoint: ``arq lattice.worker.WorkerSettings``."""
 
@@ -127,9 +133,4 @@ class WorkerSettings:
     on_shutdown = shutdown
     cron_jobs = _cron_jobs()
     max_tries = get_settings().ingest_max_attempts
-
-    @staticmethod
-    def redis_settings() -> Any:  # pragma: no cover - needs redis
-        from arq.connections import RedisSettings
-
-        return RedisSettings.from_dsn(get_settings().redis.url)
+    redis_settings = _redis_settings()

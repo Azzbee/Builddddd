@@ -127,6 +127,8 @@ Key knobs:
 - `GET /health` is process liveness and does not touch dependencies.
 - `GET /readyz` probes PostgreSQL, Neo4j, and Redis when persistence is enabled.
   It returns 503 if any probe fails or exceeds `LATTICE_READINESS_TIMEOUT_S`.
+- Compose checks the worker's arq health sentinel rather than the API HTTP port.
+  `docker compose ps` should report both `api` and `worker` as healthy.
 - Worker logs `worker.started`; ingestion logs `ingest.stage_complete` per stage.
 
 ### Reprocessing / backfill
