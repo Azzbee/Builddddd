@@ -41,7 +41,7 @@ jobs:
       - name: Build production container
         run: docker build --tag lattice-backend:ci .
       - name: Validate Compose configuration
-        working-directory: ..
+        working-directory: .
         run: LATTICE_ENV_FILE=.env.example docker compose config --quiet
 
   eval:
