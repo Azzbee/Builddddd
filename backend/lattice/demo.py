@@ -10,7 +10,7 @@ Neo4j, Postgres, or GROBID. It is the fastest path to "holy shit, it works".
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from lattice.core.llm import LLMMessage, LLMResponse
@@ -33,6 +33,10 @@ class DemoPaper:
     results: list[tuple[str, str]]  # (claim, evidence_location)
     future_work: list[str]
     references: list[str]
+    #: The paper's own research questions. Probed for coverage (see
+    #: ``landscape/coverage.py``): a question the corpus asks and cannot answer is
+    #: a known unknown made concrete.
+    questions: list[str] = field(default_factory=list)
     doi: str | None = None
     arxiv_id: str | None = None
 
@@ -52,6 +56,10 @@ DEMO_CORPUS: list[DemoPaper] = [
         [("LSTM with attention significantly improves forecasting accuracy over ARIMA", "Table 3")],
         ["test on other base metals", "incorporate macroeconomic covariates"],
         ["10.1/shared-arima", "10.1/lstm-orig"],
+        questions=[
+            "Does attention improve LSTM forecasts of LME copper prices?",
+            "How do regime shifts degrade deep forecasters?",
+        ],
     ),
     DemoPaper(
         "gru_metals.pdf",
@@ -65,6 +73,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         [("GRU improves forecasting accuracy on industrial metals versus ARIMA", "Section 5")],
         ["incorporate macroeconomic covariates", "evaluate transaction costs"],
         ["10.1/shared-arima"],
+        questions=["Do recurrent models transfer across industrial metals?"],
     ),
     DemoPaper(
         "transformer_fx.pdf",
@@ -83,6 +92,10 @@ DEMO_CORPUS: list[DemoPaper] = [
         ],
         ["reduce data requirements", "test on supply disruption events"],
         ["10.1/lstm-orig", "10.1/transformer-orig"],
+        questions=[
+            "Do transformers outperform recurrent models on commodity series?",
+            "What inductive bias explains attention gains on price series?",
+        ],
     ),
     DemoPaper(
         "transformer_skeptic.pdf",
@@ -101,6 +114,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         ],
         ["benchmark across more commodities", "study sample-size effects"],
         ["10.1/transformer-orig"],
+        questions=["Does the transformer advantage survive on small commodity samples?"],
     ),
     DemoPaper(
         "var_panel.pdf",
@@ -114,6 +128,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         [("Plain VAR underperforms on high-dimensional commodity panels", "Section 4")],
         ["apply regularization", "model nonlinear dynamics"],
         ["10.1/var-orig"],
+        questions=["Can classical VAR scale to high-dimensional commodity panels?"],
     ),
     DemoPaper(
         "lasso_var.pdf",
@@ -127,6 +142,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         [("Regularized VAR reduces forecast error versus plain VAR", "Table 1")],
         ["model nonlinear dynamics", "combine with machine learning"],
         ["10.1/var-orig"],
+        questions=["Does regularization rescue VAR on wide commodity panels?"],
     ),
     DemoPaper(
         "garch_vol.pdf",
@@ -145,6 +161,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         ],
         ["combine with machine learning", "extend to agricultural commodities"],
         ["10.1/garch-orig"],
+        questions=["Does GARCH capture energy volatility clustering better than rolling windows?"],
     ),
     DemoPaper(
         "wavelet_preprint.pdf",
@@ -158,6 +175,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         [("Wavelet-LSTM hybrids improve forecasting accuracy over plain LSTM", "Table 2")],
         ["evaluate on longer horizons"],
         ["10.1/lstm-orig"],
+        questions=["Does multi-scale decomposition separate trend from noise in copper prices?"],
         arxiv_id="2101.00001",
     ),
     DemoPaper(
@@ -172,6 +190,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         [("Wavelet-LSTM hybrids improve forecasting accuracy over plain LSTM", "Table 2")],
         ["evaluate on longer horizons"],
         ["10.1/lstm-orig"],
+        questions=["Does multi-scale decomposition separate trend from noise in copper prices?"],
         doi="10.5555/wavelet.2022",
     ),
     DemoPaper(
@@ -191,6 +210,7 @@ DEMO_CORPUS: list[DemoPaper] = [
         ],
         ["scale to more commodities", "reduce inference cost"],
         ["10.1/diffusion-orig"],
+        questions=["Can generative models produce calibrated scenarios under supply shocks?"],
     ),
 ]
 
@@ -224,7 +244,7 @@ def _card_content(p: DemoPaper) -> str:
     return json.dumps(
         {
             "problem_statement": p.problem,
-            "research_questions": [],
+            "research_questions": p.questions,
             "methodology": {
                 "approach_summary": f"{p.methods[0]} based forecaster",
                 "method_family": [

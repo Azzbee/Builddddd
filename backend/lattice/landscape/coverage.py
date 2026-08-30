@@ -78,12 +78,16 @@ class CoverageState(StrEnum):
     UNCOVERED = "uncovered"
 
 
-#: How strongly an *uncovered* probe of each origin indicates a blind spot rather
-#: than an open problem the field already knows it has.
+#: How strongly an *uncovered* probe of each origin is evidence of a blind spot.
+#: A crossing nobody asked about that also has no answer is the only one of the
+#: three that is a genuine unknown-unknown proxy. The other two are known unknowns
+#: made concrete: the field already flagged them, and the quadrants view already
+#: shows them. They stay in the ranking, heavily discounted, because an open
+#: problem with *zero* corpus evidence is still worth seeing next to the rest.
 SOURCE_WEIGHT: dict[ProbeSource, float] = {
     ProbeSource.FACET_CROSS: 1.0,
-    ProbeSource.OPEN_PROBLEM: 0.75,
-    ProbeSource.RESEARCH_QUESTION: 0.6,
+    ProbeSource.OPEN_PROBLEM: 0.45,
+    ProbeSource.RESEARCH_QUESTION: 0.35,
 }
 
 # --------------------------------------------------------------------------- tokens
@@ -153,6 +157,29 @@ _PROBE_STOP = {
     "using",
     "use",
     "used",
+    "across",
+    "within",
+    "between",
+    "during",
+    "through",
+    "other",
+    "others",
+    "such",
+    "also",
+    "based",
+    "via",
+    "per",
+    "both",
+    "each",
+    "while",
+    "given",
+    "much",
+    "many",
+    "study",
+    "studies",
+    "work",
+    "paper",
+    "papers",
     "known",
     "know",
     "show",
@@ -175,14 +202,25 @@ _PROBE_STOP = {
 }
 
 
-def content_tokens(text: str) -> set[str]:
-    """Stopworded, de-pluralized content tokens (len>=3) used for term grounding."""
-    toks: set[str] = set()
+def term_forms(text: str) -> dict[str, str]:
+    """Map each matching stem to the word it came from.
+
+    Grounding matches on de-pluralized stems, but the stems are not words
+    ("commodities" -> "commoditie"), and ``missing_terms`` is read by a human. So
+    the stem is what matches and the original word is what is reported.
+    """
+    forms: dict[str, str] = {}
     for raw in normalize_text(text).split():
         if len(raw) < 3 or raw in _PROBE_STOP:
             continue
-        toks.add(raw[:-1] if raw.endswith("s") and len(raw) > 3 else raw)
-    return toks
+        stem = raw[:-1] if raw.endswith("s") and len(raw) > 3 else raw
+        forms.setdefault(stem, raw)
+    return forms
+
+
+def content_tokens(text: str) -> set[str]:
+    """Stopworded, de-pluralized content stems (len>=3) used for term grounding."""
+    return set(term_forms(text))
 
 
 # --------------------------------------------------------------------------- probes
@@ -307,7 +345,16 @@ def _probes_from_open_problems(clusters: Sequence[OpenProblemCluster]) -> list[P
 
 
 def _probes_from_gaps(cells: Sequence[MatrixCell], row_facet: str, col_facet: str) -> list[Probe]:
-    """One probe per gap cell, salient by the cell's own gap score."""
+    """One probe per gap cell, salient by its gap score relative to the top gap.
+
+    ``gap_score`` is a product of three heuristics (feasibility x adjacency x
+    demand) whose absolute magnitude means nothing on its own: a typical corpus
+    scores every cell in the low tenths. Rescaling against the strongest gap makes
+    it comparable with the mention-count salience the other two sources use, so
+    pressure ranks probes across sources rather than by which scale happened to be
+    larger.
+    """
+    top = max((c.gap_score for c in cells), default=0.0)
     probes: list[Probe] = []
     seen: set[str] = set()
     for cell in cells:
@@ -320,7 +367,7 @@ def _probes_from_gaps(cells: Sequence[MatrixCell], row_facet: str, col_facet: st
             Probe(
                 text=text,
                 source=ProbeSource.FACET_CROSS,
-                salience=min(max(cell.gap_score, 0.0), 1.0),
+                salience=min(max(cell.gap_score, 0.0) / top, 1.0) if top > 0 else 0.0,
                 facet_cell=(cell.row, cell.col),
             )
         )
@@ -450,7 +497,8 @@ def score_probe(
     grounding_hits: int = GROUNDING_HITS,
 ) -> ProbeResult:
     """Score one probe against the evidence retrieval returned for it."""
-    tokens = content_tokens(probe.text)
+    forms = term_forms(probe.text)
+    tokens = set(forms)
     ranked = sorted(evidence, key=lambda e: e.score, reverse=True)
     if not ranked or ranked[0].score <= 0:
         return ProbeResult(
@@ -462,7 +510,7 @@ def score_probe(
             grounding=0.0,
             pressure=SOURCE_WEIGHT[probe.source] * (0.5 + 0.5 * probe.salience),
             supporting_papers=[],
-            missing_terms=sorted(tokens),
+            missing_terms=sorted(forms.values()),
             best_evidence=None,
         )
 
@@ -491,7 +539,7 @@ def score_probe(
         grounding=grounding,
         pressure=pressure,
         supporting_papers=papers,
-        missing_terms=sorted(tokens - grounded),
+        missing_terms=sorted(forms[stem] for stem in tokens - grounded),
         best_evidence=top,
     )
 

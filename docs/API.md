@@ -65,6 +65,7 @@ retryable `queue_unavailable` failure instead of leaving it stuck as queued.
 | GET | `/landscape/proposal?row&col&row_facet&col_facet&use_global` | Research proposal for one specific cell |
 | GET | `/landscape/momentum` | Concept momentum scorecards |
 | GET | `/landscape/quadrants` | Known knowns / known unknowns / unknown knowns |
+| GET | `/landscape/coverage?row_facet&col_facet&limit&blind_spot_limit&use_global` | Question-coverage probing: per-probe coverage anatomy + ranked blind spots |
 
 ## Insight features
 | Method | Path | Purpose |

@@ -14,6 +14,7 @@ const LINKS = [
   { href: "/landscape", label: "Landscape" },
   { href: "/opportunities", label: "Opportunities" },
   { href: "/quadrants", label: "Quadrants" },
+  { href: "/coverage", label: "Coverage" },
   { href: "/contradictions", label: "Contradictions" },
   { href: "/lineage", label: "Lineage" },
   { href: "/reading", label: "Reading" },

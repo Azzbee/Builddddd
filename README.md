@@ -147,7 +147,7 @@ All eight PRD "extras" are built, not just stubbed:
 Plus Prometheus metrics (`/metrics`), a concrete vision fallback, and the weekly
 digest loop. See [`docs/API.md`](docs/API.md) for the full endpoint reference.
 
-Three more capabilities round out the experience:
+Six more capabilities round out the experience:
 
 9. **LLM-judge RAG eval** - a RAGAS-style harness (`lattice eval --judge`) that grades
    answers on faithfulness (atomic-claim entailment), answer relevance, context
@@ -164,7 +164,14 @@ Three more capabilities round out the experience:
     the graph is reconstructed as of any year (communities + centrality recomputed on
     that subgraph), with a "what's new since" delta of papers and links that arrived
     after. The living graph, rewound.
-13. **Gap -> research-proposal generator** - turns the corpus's highest-pressure gaps
+13. **Question-coverage probing** - the fourth epistemic quadrant, probed rather than
+    asserted. Lattice asks the corpus a bank of questions it ought to answer (its own
+    research questions, its open problems, and templated crossings nobody asked about),
+    scores each on retrieval strength, support breadth, and term grounding, and ranks
+    what it cannot answer. Retrieval-only, so it needs no model key and cannot invent
+    a gap; every probe reports its components and the exact terms the corpus could not
+    ground.
+14. **Gap -> research-proposal generator** - turns the corpus's highest-pressure gaps
     into grounded proposals: the thesis, the building blocks already in your library
     (each cited), the method to borrow and where from, why now (momentum + demand),
     baselines to beat, and honest risks - with the Empty-vs-Blind-spot novelty call.
@@ -176,7 +183,7 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 444 tests pass offline; four live integration tests skip without
+- Backend: 480 tests pass offline; four live integration tests skip without
   service DSNs; `mypy --strict`, Ruff lint, and Ruff format checks are clean.
 - Preprint -> published **supersession** is wired end-to-end (SUPERSEDED_BY edge,
   bi-temporal edge invalidation, out of analytics and the candidate pool), and
@@ -188,7 +195,7 @@ eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,
   bi-temporal edges, claim relations, and the Neo4j read paths) on every push.
-- Web app has 17 application routes and passes Prettier, ESLint, Vitest,
+- Web app has 18 application routes and passes Prettier, ESLint, Vitest,
   TypeScript, the production build, and `npm audit` with zero reported
   vulnerabilities. Static SQL is parsed and validated with sqlglot.
 - Offline demo mode (`make demo`) loads a populated graph with zero external

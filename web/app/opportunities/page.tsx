@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { ProposalEvidence, ResearchProposal } from "@/lib/types";
 
@@ -14,30 +15,52 @@ const STATE_STYLE: Record<string, string> = {
 };
 
 export default function OpportunitiesPage() {
-  const [rowFacet, setRowFacet] = useState("method");
-  const [colFacet, setColFacet] = useState("dataset");
+  return (
+    <Suspense
+      fallback={<p className="text-sm text-muted">Loading opportunities...</p>}
+    >
+      <OpportunitiesView />
+    </Suspense>
+  );
+}
+
+function OpportunitiesView() {
+  // A single cell can be addressed directly (?row=&col=), which is how the
+  // coverage view hands a blind spot straight to the proposal generator.
+  const params = useSearchParams();
+  const cellRow = params.get("row");
+  const cellCol = params.get("col");
+  const [rowFacet, setRowFacet] = useState(params.get("row_facet") ?? "method");
+  const [colFacet, setColFacet] = useState(
+    params.get("col_facet") ?? "dataset",
+  );
   const [useGlobal, setUseGlobal] = useState(false);
   const [proposals, setProposals] = useState<ResearchProposal[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
 
-  async function run() {
+  const run = useCallback(async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const r = await api.opportunities(rowFacet, colFacet, 6, useGlobal);
-      setProposals(r.proposals);
+      if (cellRow && cellCol) {
+        setProposals([
+          await api.proposal(cellRow, cellCol, rowFacet, colFacet, useGlobal),
+        ]);
+      } else {
+        const r = await api.opportunities(rowFacet, colFacet, 6, useGlobal);
+        setProposals(r.proposals);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }
+  }, [cellRow, cellCol, rowFacet, colFacet, useGlobal]);
 
   useEffect(() => {
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [run]);
 
   return (
     <div className="space-y-4">
@@ -47,10 +70,18 @@ export default function OpportunitiesPage() {
             Research opportunities
           </h1>
           <p className="text-sm text-muted">
-            The corpus&apos;s highest-pressure gaps, each turned into a grounded
-            proposal: what to try, the building blocks already in your library,
-            why now, and the risks.
+            {cellRow && cellCol
+              ? `One gap, one proposal: ${cellRow} x ${cellCol}.`
+              : "The corpus's highest-pressure gaps, each turned into a grounded proposal: what to try, the building blocks already in your library, why now, and the risks."}
           </p>
+          {cellRow && cellCol && (
+            <Link
+              href="/opportunities"
+              className="text-xs text-accent hover:underline"
+            >
+              back to the top gaps
+            </Link>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Facet
@@ -90,7 +121,7 @@ export default function OpportunitiesPage() {
       )}
       {!loading && proposals.length === 0 && !error && (
         <div className="card text-sm text-muted">
-          No empty cells for this facet pair — try another combination, or
+          No empty cells for this facet pair - try another combination, or
           ingest more papers.
         </div>
       )}

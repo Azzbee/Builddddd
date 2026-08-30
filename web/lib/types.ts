@@ -160,6 +160,48 @@ export interface MatrixCell {
   };
 }
 
+export interface ProbeEvidence {
+  paper_id: string;
+  title: string;
+  section: string | null;
+  evidence_location: string | null;
+  page: number | null;
+  score: number;
+}
+
+export interface CoverageProbe {
+  text: string;
+  source: "research_question" | "open_problem" | "facet_cross";
+  salience: number;
+  origin_paper_ids: string[];
+  facet_cell: [string, string] | null;
+  coverage: number;
+  state: "covered" | "partial" | "uncovered";
+  components: { retrieval: number; support: number; grounding: number };
+  pressure: number;
+  supporting_papers: string[];
+  missing_terms: string[];
+  best_evidence: ProbeEvidence | null;
+}
+
+export interface CoverageSummary {
+  probe_count: number;
+  coverage_index: number;
+  blind_spot_ratio: number;
+  by_state: Record<string, number>;
+  by_source: Record<string, number>;
+}
+
+export interface CoverageReport {
+  row_facet: string;
+  col_facet: string;
+  summary: CoverageSummary;
+  probes: CoverageProbe[];
+  blind_spots: CoverageProbe[];
+  generated: Record<string, number>;
+  dropped_by_cap: Record<string, number>;
+}
+
 export interface ProposalEvidence {
   paper_id: string;
   title: string;

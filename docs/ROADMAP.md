@@ -56,6 +56,7 @@ Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
 | 11. Lasso-select-to-summarize in the explorer | Done | `IngestionService.summarize_papers`, `/papers/summarize`, `web/components/GraphExplorer.tsx` |
 | 12. Time-travel graph replay (as-of-year snapshot + delta) | Done | `IngestionService.graph_snapshot/timeline/delta`, `/graph?as_of_year`, `/graph/timeline`, `/graph/delta` |
 | 13. Gap -> research-proposal generator | Done | `landscape/proposal.py`, `IngestionService.research_proposal/research_opportunities`, `/landscape/proposal`, `/landscape/opportunities`, `web/app/opportunities` |
+| 14. Question-coverage probing (unknown-unknowns proxy) | Done | `landscape/coverage.py`, `IngestionService.question_coverage`, `/landscape/coverage`, `web/app/coverage`, 4th epistemic quadrant |
 
 ## Production verification
 
@@ -86,8 +87,33 @@ in docker-compose), and a `lattice` CLI provides serve/demo/ingest/query/eval.
   family); an escalation failure degrades to the valid primary content instead of
   failing the job. Cost caps always propagate.
 
+## Question-coverage probing (the fourth quadrant)
+
+The fourth epistemic quadrant cannot be enumerated, so it is probed. A bank of
+questions the corpus ought to answer is assembled from three tagged sources, run
+through hybrid retrieval, and scored on three auditable components
+(`landscape/coverage.py`):
+
+    coverage(q) = 0.35*retrieval + 0.25*support_breadth + 0.40*term_grounding
+
+Grounding carries the most weight because it is the only component free of
+embedding-backend calibration: the hashing fallback (demo/dev/CI) and a real
+bge-m3 (prod) score on completely different scales, but "does this term appear in
+the evidence" is the same question either way.
+
+Source tags make an uncovered result interpretable. Research questions and open
+problems the corpus raises are **known unknowns made concrete**; templated
+crossings of the highest-pressure gap-matrix cells are the **blind-spot proxy**,
+because nobody asked and nothing answers. Pressure weights the three accordingly
+(1.0 / 0.45 / 0.35), so the ranking surfaces the unasked rather than restating
+the known-unknowns quadrant next door.
+
+Retrieval-only and offline: no model key, works in `make demo`, and it cannot
+hallucinate a gap. Generation is capped and the cap is reported per source, never
+silently sampled. Surfaced at `/coverage` (full probe anatomy, missing terms,
+deep link into the proposal generator) and as the fourth panel on `/quadrants`.
+
 ## Future work
 
 - GROBID/LLM end-to-end run in CI (needs a model key); both are thin/fixture-tested.
 - Optional Phase-2 domain-adapted embedding fine-tune (ship only if eval wins).
-- Unknown-unknowns proxies surfaced in the UI (question-coverage probing).

@@ -145,3 +145,78 @@ describe("contradictions API client", () => {
     );
   });
 });
+
+describe("coverage API client", () => {
+  const probe = {
+    text: "How does diffusion perform on lme copper?",
+    source: "facet_cross" as const,
+    salience: 0.4,
+    origin_paper_ids: [],
+    facet_cell: ["diffusion", "lme copper"] as [string, string],
+    coverage: 0.12,
+    state: "uncovered" as const,
+    components: { retrieval: 0.2, support: 0, grounding: 0 },
+    pressure: 0.61,
+    supporting_papers: [],
+    missing_terms: ["diffusion", "copper"],
+    best_evidence: null,
+  };
+
+  it("requests the probe bank with explicit caps and no global signal", async () => {
+    const report = {
+      row_facet: "method",
+      col_facet: "dataset",
+      summary: {
+        probe_count: 1,
+        coverage_index: 0.12,
+        blind_spot_ratio: 1,
+        by_state: { covered: 0, partial: 0, uncovered: 1 },
+        by_source: { facet_cross: 1 },
+      },
+      probes: [probe],
+      blind_spots: [probe],
+      generated: { facet_cross: 3 },
+      dropped_by_cap: { facet_cross: 2 },
+    };
+    const request = vi.fn(async () => Response.json(report, { status: 200 }));
+    vi.stubGlobal("fetch", request);
+
+    await expect(api.coverage()).resolves.toEqual(report);
+    expect(request).toHaveBeenCalledWith(
+      "/api/landscape/coverage?row_facet=method&col_facet=dataset" +
+        "&limit=48&blind_spot_limit=10&use_global=false",
+      { cache: "no-store", headers: { "X-Workspace-Id": "default" } },
+    );
+  });
+
+  it("passes the caller's facets, caps, and global-signal choice through", async () => {
+    const request = vi.fn(async () =>
+      Response.json(
+        {
+          row_facet: "method",
+          col_facet: "concept",
+          summary: {
+            probe_count: 0,
+            coverage_index: 0,
+            blind_spot_ratio: 0,
+            by_state: {},
+            by_source: {},
+          },
+          probes: [],
+          blind_spots: [],
+          generated: {},
+          dropped_by_cap: {},
+        },
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", request);
+
+    await api.coverage("method", "concept", 12, 3, true);
+    expect(request).toHaveBeenCalledWith(
+      "/api/landscape/coverage?row_facet=method&col_facet=concept" +
+        "&limit=12&blind_spot_limit=3&use_global=true",
+      { cache: "no-store", headers: { "X-Workspace-Id": "default" } },
+    );
+  });
+});

@@ -1,6 +1,7 @@
 import type {
   AgentAnswer,
   ClaimRelationEdge,
+  CoverageReport,
   GraphData,
   GraphDelta,
   GraphTimeline,
@@ -120,6 +121,17 @@ export const api = {
       top_gaps: MatrixCell[];
     }>(`/landscape/matrix?row=${row}&col=${col}`),
   momentum: () => get<{ movers: MomentumMover[] }>("/landscape/momentum"),
+  coverage: (
+    rowFacet = "method",
+    colFacet = "dataset",
+    limit = 48,
+    blindSpotLimit = 10,
+    useGlobal = false,
+  ) =>
+    get<CoverageReport>(
+      `/landscape/coverage?row_facet=${rowFacet}&col_facet=${colFacet}` +
+        `&limit=${limit}&blind_spot_limit=${blindSpotLimit}&use_global=${useGlobal}`,
+    ),
   opportunities: (
     rowFacet = "method",
     colFacet = "dataset",
