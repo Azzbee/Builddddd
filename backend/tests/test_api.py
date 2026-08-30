@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -7,7 +8,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from lattice.api.app import create_app
-from lattice.api.deps import Container, set_container
+from lattice.api.deps import Container, get_container, set_container
 from lattice.config import Settings
 from lattice.core.llm import LLMMessage, LLMResponse
 from lattice.db.aux_stores import InMemoryDigestStore, InMemoryWatchStore
@@ -16,6 +17,7 @@ from lattice.db.cards import InMemoryCardStore, InMemoryJobStore
 from lattice.db.vector import InMemoryVectorStore
 from lattice.embeddings.chunks import ChunkEmbedder
 from lattice.embeddings.specter2 import Specter2Embedder
+from lattice.extraction.schemas import DatasetRef, Methodology, PaperCard
 from lattice.graph.store import FakeGraphStore
 from lattice.ingestion.models import ParsedDocument, ParsedSection
 from lattice.ingestion.service import IngestionService
@@ -51,7 +53,7 @@ def _card_json(title_tag: str) -> str:
     return json.dumps(
         {
             "problem_statement": "Forecasting copper prices is hard.",
-            "research_questions": [],
+            "research_questions": ["Can LSTM models forecast LME copper prices?"],
             "methodology": {
                 "approach_summary": "LSTM",
                 "techniques": ["LSTM"],
@@ -112,6 +114,20 @@ def client() -> TestClient:
 
 def _pdf(tag: str) -> bytes:
     return b"%PDF-1.7\n" + tag.encode() + b" " + b"x" * 5000
+
+
+def _diffusion_card() -> PaperCard:
+    """A second (method, dataset) pair, so the gap matrix has empty cells."""
+    return PaperCard(
+        paper_id="diffusion-gold",
+        title="Diffusion scenarios for COMEX gold",
+        year=2024,
+        problem_statement="Scenario forecasting under supply shocks is unaddressed.",
+        methodology=Methodology(approach_summary="diffusion", techniques=["diffusion"]),
+        datasets=[DatasetRef(name="COMEX Gold")],
+        domains=["commodity markets"],
+        methods_taxonomy=["diffusion"],
+    )
 
 
 def test_health(client: TestClient) -> None:
@@ -543,6 +559,66 @@ def test_landscape_quadrants(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert "known_knowns" in body and "known_unknowns" in body and "unknown_knowns" in body
+
+
+def test_landscape_coverage(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    client.post("/ingest/file", files={"file": ("b.pdf", _pdf("B"), "application/pdf")})
+    r = client.get("/landscape/coverage")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["row_facet"] == "method" and body["col_facet"] == "dataset"
+    assert set(body["summary"]) == {
+        "probe_count",
+        "coverage_index",
+        "blind_spot_ratio",
+        "by_state",
+        "by_source",
+    }
+    # The corpus's own research question becomes a probe with grounded evidence.
+    asked = next(p for p in body["probes"] if p["source"] == "research_question")
+    assert asked["text"] == "Can LSTM models forecast LME copper prices?"
+    assert asked["components"]["grounding"] > 0
+    assert asked["best_evidence"]["paper_id"] in asked["supporting_papers"]
+    assert all(s["state"] != "covered" for s in body["blind_spots"])
+
+
+def test_landscape_coverage_rejects_unknown_facets(client: TestClient) -> None:
+    r = client.get("/landscape/coverage?row_facet=venue")
+    assert r.status_code == 200
+    assert "error" in r.json()
+
+
+def test_landscape_coverage_uses_the_global_signal_when_asked(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lattice.api import landscape
+
+    seen: list[list[tuple[str, str]]] = []
+
+    async def _counts(_client: object, cells: list[tuple[str, str]]) -> dict[tuple[str, str], int]:
+        seen.append(cells)
+        return dict.fromkeys(cells, 500)
+
+    monkeypatch.setattr(landscape, "fetch_global_counts", _counts)
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    # A second method/dataset pair, so the matrix actually has empty cells to price.
+    asyncio.run(get_container().cards.put_card(_diffusion_card()))
+
+    r = client.get("/landscape/coverage?use_global=true")
+    assert r.status_code == 200, r.text
+    assert seen  # the Empty vs Blind-spot signal was actually consulted
+    assert ("diffusion", "lme copper") in seen[0]
+
+
+def test_landscape_coverage_reports_its_cap(client: TestClient) -> None:
+    client.post("/ingest/file", files={"file": ("a.pdf", _pdf("A"), "application/pdf")})
+    body = client.get("/landscape/coverage?limit=1&blind_spot_limit=1").json()
+    assert len(body["probes"]) == 1
+    assert len(body["blind_spots"]) <= 1
+    # Whatever the cap dropped is reported, never silently sampled away.
+    assert isinstance(body["dropped_by_cap"], dict)
+    assert isinstance(body["generated"], dict)
 
 
 def test_landscape_matrix_local_only(client: TestClient) -> None:

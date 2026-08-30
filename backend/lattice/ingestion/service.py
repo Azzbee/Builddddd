@@ -68,6 +68,16 @@ from lattice.ingestion.models import (
 )
 from lattice.ingestion.pdf_utils import classify_pdf
 from lattice.ingestion.pipeline import IngestionPipeline, PipelineContext
+from lattice.landscape.coverage import (
+    DEFAULT_PROBE_LIMIT,
+    ProbeEvidence,
+    QuestionMention,
+    blind_spots,
+    generate_probes,
+    score_probe,
+    summarize_coverage,
+)
+from lattice.landscape.matrix import MatrixCell
 from lattice.landscape.proposal import FacetPaper, MomentumLite
 
 log = get_logger("ingestion.service")
@@ -865,6 +875,127 @@ class IngestionService:
             "known_knowns": known_knowns,
             "known_unknowns": known_unknowns,
             "unknown_knowns": unknown_knowns,
+        }
+
+    # ------------------------------------------------------------------ coverage probing
+    def _gap_cells(
+        self,
+        cards: list[PaperCard],
+        row_facet: str,
+        col_facet: str,
+        *,
+        limit: int,
+        global_counts: dict[tuple[str, str], int] | None = None,
+    ) -> list[MatrixCell]:
+        """The corpus's highest-pressure empty/blind-spot cells for ``row x col``."""
+        from lattice.landscape.matrix import PaperFacets, build_gap_matrix, top_gaps
+        from lattice.landscape.signals import DemandScorer
+
+        counts = global_counts or {}
+        facets = [
+            PaperFacets(
+                paper_id=c.paper_id,
+                year=c.year,
+                methods=c.normalized_methods,
+                datasets=c.normalized_datasets,
+                concepts={d.lower() for d in c.domains},
+            )
+            for c in cards
+        ]
+        demand = DemandScorer.from_cards(self.chunk_embedder, cards)
+        cells = build_gap_matrix(
+            facets,
+            row_facet,
+            col_facet,
+            now_year=datetime.now(UTC).year,
+            global_count_fn=lambda r, cv: counts.get((r, cv), 0),
+            demand_fn=demand.score,
+        )
+        return top_gaps(cells, limit=limit)
+
+    async def question_coverage(
+        self,
+        row_facet: str = "method",
+        col_facet: str = "dataset",
+        *,
+        limit: int = DEFAULT_PROBE_LIMIT,
+        blind_spot_limit: int = 10,
+        top_k: int | None = None,
+        global_counts: dict[tuple[str, str], int] | None = None,
+    ) -> dict[str, object]:
+        """Probe the corpus with questions it ought to answer and report what it cannot.
+
+        The bank is drawn from the corpus's own research questions, its clustered open
+        problems, and templated crossings of the highest-pressure gap-matrix cells.
+        Each probe is run through hybrid retrieval and scored on three auditable
+        components (see ``landscape/coverage.py``). Fully offline: no LLM call, so this
+        works in demo mode and cannot hallucinate a blind spot.
+        """
+        from lattice.landscape.quadrants import OpenProblemMention, cluster_open_problems
+
+        cards = await self._active_cards()
+        now_year = datetime.now(UTC).year
+
+        questions = [
+            QuestionMention(card.paper_id, q.strip())
+            for card in cards
+            for q in card.research_questions
+            if q.strip()
+        ]
+
+        mentions: list[OpenProblemMention] = []
+        fw_texts = [(c.paper_id, fw, c.year) for c in cards for fw in c.future_work if fw.strip()]
+        if fw_texts:
+            vecs = self.chunk_embedder.embed_texts([t for _p, t, _y in fw_texts])
+            mentions = [
+                OpenProblemMention(pid, text, vec, year)
+                for (pid, text, year), vec in zip(fw_texts, vecs, strict=True)
+            ]
+        clusters = cluster_open_problems(mentions, current_year=now_year)
+
+        gap_cells = self._gap_cells(
+            cards, row_facet, col_facet, limit=limit, global_counts=global_counts
+        )
+
+        bank = generate_probes(
+            questions,
+            clusters,
+            gap_cells,
+            row_facet=row_facet,
+            col_facet=col_facet,
+            limit=limit,
+        )
+
+        k = top_k if top_k is not None else self.settings.rag.top_k_chunks
+        results = []
+        if bank.probes:
+            embeddings = self.chunk_embedder.embed_texts([p.text for p in bank.probes])
+            for probe, embedding in zip(bank.probes, embeddings, strict=True):
+                hits = await self.vectors.hybrid_search(
+                    probe.text, embedding, k, {"workspace_id": self.settings.workspace_id}
+                )
+                evidence = [
+                    ProbeEvidence(
+                        paper_id=h.paper_id,
+                        title=h.title,
+                        text=h.text,
+                        score=h.score,
+                        section=h.section_title,
+                        evidence_location=h.evidence_location,
+                        page=h.page,
+                    )
+                    for h in hits
+                ]
+                results.append(score_probe(probe, evidence))
+
+        return {
+            "row_facet": row_facet,
+            "col_facet": col_facet,
+            "summary": summarize_coverage(results),
+            "probes": [r.to_json() for r in results],
+            "blind_spots": [r.to_json() for r in blind_spots(results, limit=blind_spot_limit)],
+            "generated": bank.generated,
+            "dropped_by_cap": bank.dropped,
         }
 
     # ------------------------------------------------------------------ proposals

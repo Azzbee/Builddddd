@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from lattice.api.deps import Container, get_container, require_auth
 from lattice.core.logging import get_logger
 from lattice.enrichment.openalex import OpenAlexClient
+from lattice.landscape.coverage import DEFAULT_PROBE_LIMIT
 from lattice.landscape.matrix import PaperFacets, build_gap_matrix, top_gaps
 from lattice.landscape.momentum import momentum_score
 from lattice.landscape.signals import DemandScorer, fetch_global_counts
@@ -141,6 +142,38 @@ async def opportunities(
         global_counts = await _empty_cell_global_counts(c, await _facets(c), row_facet, col_facet)
     return await c.ingestion.research_opportunities(
         row_facet, col_facet, limit=limit, global_counts=global_counts
+    )
+
+
+@router.get("/coverage")
+async def coverage(
+    row_facet: str = Query("method"),
+    col_facet: str = Query("dataset"),
+    limit: int = Query(DEFAULT_PROBE_LIMIT, ge=1, le=200, description="probe-bank size cap"),
+    blind_spot_limit: int = Query(10, ge=1, le=50),
+    use_global: bool = Query(
+        False, description="Query OpenAlex for the Empty vs Blind-spot signal"
+    ),
+    c: Container = Depends(get_container),
+) -> dict[str, object]:
+    """Question-coverage probing: the unknown-unknowns proxy.
+
+    Asks the corpus a bank of questions it ought to answer (its own research
+    questions, its open problems, and templated crossings of the highest-pressure
+    gap cells), scores how well retrieval answers each, and ranks what it cannot.
+    Retrieval-only and offline, so it needs no model key.
+    """
+    if row_facet not in _FACETS or col_facet not in _FACETS:
+        return {"error": f"facets must be in {sorted(_FACETS)}"}
+    global_counts: dict[tuple[str, str], int] = {}
+    if use_global:
+        global_counts = await _empty_cell_global_counts(c, await _facets(c), row_facet, col_facet)
+    return await c.ingestion.question_coverage(
+        row_facet,
+        col_facet,
+        limit=limit,
+        blind_spot_limit=blind_spot_limit,
+        global_counts=global_counts,
     )
 
 
