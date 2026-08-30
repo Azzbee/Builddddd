@@ -66,3 +66,54 @@ def test_full_text_includes_abstract_and_sections() -> None:
     ft = doc.full_text()
     assert "# Abstract" in ft
     assert "# Methodology" in ft
+
+
+# --------------------------------------------------------------- request encoding
+async def test_client_sends_tei_coordinates_as_repeated_fields() -> None:
+    """GROBID stamps no coordinates when the element list is comma-joined.
+
+    It reads ``teiCoordinates`` as a repeated form field, one element name per
+    field, and silently accepts (and ignores) a single comma-joined value. That
+    failure is invisible: parsing still succeeds, every section just comes back
+    with ``page=None`` and chat citations lose their page anchors.
+    """
+    import httpx
+    import respx
+    from lattice.config import GrobidSettings
+    from lattice.ingestion.grobid_client import GrobidClient, coordinate_elements
+
+    settings = GrobidSettings(url="http://grobid.test:8070")
+    async with respx.mock:
+        route = respx.post("http://grobid.test:8070/api/processFulltextDocument").mock(
+            return_value=httpx.Response(200, content=FIXTURE.read_bytes())
+        )
+        await GrobidClient(settings).process_fulltext(b"%PDF-1.7\nx", "paper.pdf")
+
+    body = route.calls[0].request.content.decode("latin-1")
+    names = [
+        line.split('name="', 1)[1].split('"', 1)[0]
+        for line in body.split("\r\n")
+        if "Content-Disposition: form-data" in line
+    ]
+    expected = coordinate_elements(settings.tei_coordinates)
+    assert len(expected) > 1
+    assert names.count("teiCoordinates") == len(expected)
+    for element in expected:
+        assert f"\r\n\r\n{element}\r\n" in body
+
+
+async def test_client_omits_tei_coordinates_when_configured_empty() -> None:
+    import httpx
+    import respx
+    from lattice.config import GrobidSettings
+    from lattice.ingestion.grobid_client import GrobidClient
+
+    async with respx.mock:
+        route = respx.post("http://grobid.test:8070/api/processFulltextDocument").mock(
+            return_value=httpx.Response(200, content=FIXTURE.read_bytes())
+        )
+        await GrobidClient(
+            GrobidSettings(url="http://grobid.test:8070", tei_coordinates=" , ")
+        ).process_fulltext(b"%PDF-1.7\nx", "paper.pdf")
+
+    assert b"teiCoordinates" not in route.calls[0].request.content

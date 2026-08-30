@@ -539,3 +539,33 @@ def test_score_probe_partially_answered_question() -> None:
     assert result.grounding == 1 / 3
     assert result.state is CoverageState.PARTIAL
     assert PARTIAL_MIN <= result.coverage < COVERED_MIN
+
+
+def test_gap_salience_is_relative_to_the_strongest_gap() -> None:
+    # gap_score is feasibility x adjacency x demand: a product that lands in the
+    # low tenths on any real corpus. Used raw it buries facet crossings under
+    # mention-count salience, so it is rescaled against the top gap in the set.
+    bank = generate_probes(
+        gap_cells=[
+            _gap_cell("diffusion", "lme copper", 0.08),
+            _gap_cell("garch", "lme copper", 0.02),
+        ]
+    )
+    by_row = {p.facet_cell[0]: p.salience for p in bank.probes if p.facet_cell}
+    assert by_row["diffusion"] == 1.0
+    assert by_row["garch"] == 0.25
+
+
+def test_gap_salience_is_zero_when_every_cell_scores_zero() -> None:
+    bank = generate_probes(gap_cells=[_gap_cell("diffusion", "lme copper", 0.0)])
+    assert bank.probes[0].salience == 0.0
+
+
+def test_missing_terms_report_words_not_stems() -> None:
+    # Matching de-pluralizes ("commodities" -> "commoditie"), but the stem is not
+    # a word and missing_terms is read by a human.
+    probe = _probe("How do diffusion models generalize across commodities?")
+    result = score_probe(probe, [_evidence("p1", "Copper price forecasting", 0.6)])
+    assert "commodities" in result.missing_terms
+    assert "commoditie" not in result.missing_terms
+    assert "across" not in result.missing_terms  # prose glue never becomes a term

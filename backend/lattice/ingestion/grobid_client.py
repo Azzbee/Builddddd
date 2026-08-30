@@ -73,6 +73,11 @@ def _persname(el: _FindableElement) -> str:
     return " ".join(p for p in parts if p)
 
 
+def coordinate_elements(setting: str) -> list[str]:
+    """Split the configured ``teiCoordinates`` list into individual element names."""
+    return [name.strip() for name in setting.split(",") if name.strip()]
+
+
 def parse_tei(xml: str | bytes) -> ParsedDocument:
     """Parse GROBID TEI XML into a ParsedDocument. Pure and dependency-light."""
     from lxml import etree
@@ -191,13 +196,18 @@ class GrobidClient:
         owns = self._client is None
         url = f"{self._settings.url.rstrip('/')}/api/processFulltextDocument"
         files = {"input": (filename, pdf_bytes, "application/pdf")}
-        data = {
+        data: dict[str, str | list[str]] = {
             "consolidateHeader": str(self._settings.consolidate_header),
             "consolidateCitations": str(self._settings.consolidate_citations),
             "includeRawCitations": "1",
-            # Ask GROBID to stamp page coordinates so sections carry a page anchor.
-            "teiCoordinates": self._settings.tei_coordinates,
         }
+        # Ask GROBID to stamp page coordinates so sections carry a page anchor
+        # (this is what puts "p.8" on a chat citation). GROBID reads
+        # teiCoordinates as a *repeated* form field, one element name per field;
+        # a single comma-joined value is silently accepted and stamps nothing.
+        elements = coordinate_elements(self._settings.tei_coordinates)
+        if elements:
+            data["teiCoordinates"] = elements
         try:
             resp = await client.post(url, files=files, data=data)
             resp.raise_for_status()

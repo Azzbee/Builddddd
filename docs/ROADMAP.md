@@ -58,6 +58,21 @@ Plus, beyond the PRD extras: OpenAlex global signals powering the Empty-vs-Blind
 | 13. Gap -> research-proposal generator | Done | `landscape/proposal.py`, `IngestionService.research_proposal/research_opportunities`, `/landscape/proposal`, `/landscape/opportunities`, `web/app/opportunities` |
 | 14. Question-coverage probing (unknown-unknowns proxy) | Done | `landscape/coverage.py`, `IngestionService.question_coverage`, `/landscape/coverage`, `web/app/coverage`, 4th epistemic quadrant |
 
+## End-to-end verification
+
+The GROBID hop is no longer "written but unrun" either. An `e2e` CI job runs a
+real GROBID 0.8.1 container (the same image docker-compose ships) against a
+generated paper-shaped PDF, all the way through TEI parsing, chunking, embedding,
+card storage, and graph writes, with a scripted model. It needs no secrets, so it
+runs on every push and on fork PRs. Adding an `ANTHROPIC_API_KEY` repository
+secret activates a second leg that repeats the run against a live model and
+asserts the extracted card derives from the paper; the job caps per-job spend.
+
+Its first run found a real defect: `teiCoordinates` was sent to GROBID as one
+comma-joined field, which GROBID accepts and ignores, so no page coordinates came
+back and chat citations silently lost their "p.8" anchors. Fixed, with both a
+request-encoding unit test and a live page-anchor assertion.
+
 ## Production verification
 
 The production datastore code is no longer "written but unrun": a CI job spins up
@@ -115,5 +130,4 @@ deep link into the proposal generator) and as the fourth panel on `/quadrants`.
 
 ## Future work
 
-- GROBID/LLM end-to-end run in CI (needs a model key); both are thin/fixture-tested.
 - Optional Phase-2 domain-adapted embedding fine-tune (ship only if eval wins).

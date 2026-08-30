@@ -183,7 +183,7 @@ Built milestone by milestone (M0 skeleton through M9 landscape intelligence) plu
 the extras above. Each milestone is independently shippable with its own tests and
 eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 
-- Backend: 480 tests pass offline; four live integration tests skip without
+- Backend: 485 tests pass offline; four live integration tests skip without
   service DSNs; `mypy --strict`, Ruff lint, and Ruff format checks are clean.
 - Preprint -> published **supersession** is wired end-to-end (SUPERSEDED_BY edge,
   bi-temporal edge invalidation, out of analytics and the candidate pool), and
@@ -191,6 +191,13 @@ eval criteria; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the state.
 - Embeddings: real `sentence-transformers` (bge-m3 + SPECTER) wire in automatically in
   prod (`LATTICE_ENVIRONMENT=prod`) or via `LATTICE_EMBEDDING__BACKEND=local`; the
   hashing fallback keeps demo/dev/CI offline and fast. Load failures degrade, never crash.
+- The **GROBID hop is verified live in CI** too: an `e2e` job runs a real GROBID
+  0.8.1 container against a generated paper-shaped PDF, through TEI parsing,
+  chunking, embedding, card storage, and graph writes. It needs no secrets, so it
+  runs on every push and on fork PRs; adding an `ANTHROPIC_API_KEY` secret turns on
+  a second leg that repeats the run against a live model. Its first run caught
+  `teiCoordinates` being sent as one comma-joined field, which GROBID silently
+  ignores, quietly stripping the page anchors off chat citations.
 - The production datastore code is verified **live in CI**: a dedicated job spins up
   real Postgres+pgvector and Neo4j service containers and runs the integration
   suite (chunk ANN/hybrid search, PDF blob storage, idempotent graph writes,

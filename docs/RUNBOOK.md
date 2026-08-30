@@ -40,6 +40,40 @@ deliberately interconnected corpus at startup, so the graph, contradictions,
 quadrants, momentum, lineage, reading queue, and cited chat answers are all
 populated immediately.
 
+## End-to-end verification (live GROBID, optional live model)
+
+`make test-e2e` runs the real pipeline against a real GROBID container: a
+generated paper-shaped PDF (`backend/tests/fixtures/paper_pdf.py`, no binary blob,
+no network fetch) goes through live `processFulltextDocument`, TEI parsing,
+chunking, embedding, card storage, and graph writes. The model is scripted, so
+this leg is deterministic, free, and runs on every push in the `e2e` CI job.
+
+The same suite gains a live-model leg when `LATTICE_E2E_LLM_MODEL` is set and that
+provider's key is in the environment. It asserts the extracted PaperCard actually
+derives from the paper (copper, a recurrent method, an ARIMA baseline, non-empty
+key results), not merely that it is schema-valid:
+
+```bash
+docker run --rm -d -p 8070:8070 lfoppiano/grobid:0.8.1
+cd backend && uv sync --extra dev --extra api --extra llm
+LATTICE_E2E_GROBID_URL=http://localhost:8070 \
+LATTICE_E2E_LLM_MODEL=claude-haiku-4-5-20251001 \
+ANTHROPIC_API_KEY=... \
+LATTICE_COST__PER_JOB_USD_CAP=0.10 \
+uv run pytest -m e2e -v
+```
+
+**To turn the LLM leg on in CI**, add an `ANTHROPIC_API_KEY` repository secret.
+Nothing else changes: the job detects the secret and runs the extra step, and
+without it (including on every fork PR) the GROBID leg still runs and passes. The
+job caps per-job spend at $0.10. The cross-provider extraction fallback stays
+unexercised there, since it deliberately targets a different provider family.
+
+Without a key the job is still worth its minutes: its first run caught GROBID
+returning no page coordinates, because `teiCoordinates` was being sent as one
+comma-joined field instead of a repeated one. Parsing succeeded, so nothing
+failed; chat citations just quietly lost their page anchors.
+
 ## Local model (real papers, zero API cost)
 
 Run the full real pipeline (GROBID parse -> extraction -> embeddings -> linking ->

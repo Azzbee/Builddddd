@@ -105,6 +105,56 @@ jobs:
       - name: Run live integration tests
         run: uv run pytest -m integration -v
 
+  e2e:
+    name: E2E (live GROBID + LLM when keyed)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      # Same image/tag as docker-compose.yml, so CI verifies what ships.
+      grobid:
+        image: lfoppiano/grobid:0.8.1
+        ports:
+          - 8070:8070
+        options: >-
+          --health-cmd "curl --fail --silent http://localhost:8070/api/isalive || exit 1"
+          --health-interval 15s --health-timeout 10s --health-retries 40
+          --health-start-period 60s
+    env:
+      LATTICE_E2E_GROBID_URL: http://localhost:8070
+      # A live model run must never be able to spend real money on a bad loop.
+      LATTICE_COST__PER_JOB_USD_CAP: "0.10"
+      LATTICE_COST__DAILY_USD_CAP: "1.00"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - run: uv venv --python 3.11
+      - run: uv sync --locked --extra dev --extra api --extra llm
+      # Job-level `if:` cannot read secrets, so the gate is a step output.
+      # No key (including every fork PR) still runs the GROBID leg and passes.
+      - name: Detect a model key
+        id: gate
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No ANTHROPIC_API_KEY secret; running the GROBID leg only."
+          fi
+      - name: Live GROBID end to end (no key needed)
+        run: uv run pytest -m e2e -v
+      - name: Live GROBID + live model end to end
+        if: steps.gate.outputs.present == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LATTICE_E2E_LLM_MODEL: claude-haiku-4-5-20251001
+        run: uv run pytest -m e2e -v
+
   web:
     name: Web (format, lint, test, typecheck, build, audit)
     runs-on: ubuntu-latest

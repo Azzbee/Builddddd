@@ -127,4 +127,5 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
     "integration: requires external services (neo4j, postgres, grobid)",
+    "e2e: live end-to-end run against a real GROBID (and a real model when keyed)",
 ]
