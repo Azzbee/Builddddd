@@ -113,14 +113,15 @@ jobs:
         working-directory: backend
     services:
       # Same image/tag as docker-compose.yml, so CI verifies what ships.
+      # No container healthcheck: the image has no curl (which is why
+      # docker-compose.yml resorts to a bash /dev/tcp probe), and a healthcheck
+      # that cannot execute is reported unhealthy immediately, failing the job
+      # before a step ever runs. Readiness is waited for from the runner below,
+      # where curl exists and a timeout produces a readable log.
       grobid:
         image: lfoppiano/grobid:0.8.1
         ports:
           - 8070:8070
-        options: >-
-          --health-cmd "curl --fail --silent http://localhost:8070/api/isalive || exit 1"
-          --health-interval 15s --health-timeout 10s --health-retries 40
-          --health-start-period 60s
     env:
       LATTICE_E2E_GROBID_URL: http://localhost:8070
       # A live model run must never be able to spend real money on a bad loop.
@@ -133,6 +134,19 @@ jobs:
           enable-cache: true
       - run: uv venv --python 3.11
       - run: uv sync --locked --extra dev --extra api --extra llm
+      - name: Wait for GROBID
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8070/api/isalive; then
+              echo "GROBID ready after ${attempt} attempt(s)"
+              curl --silent http://localhost:8070/api/version || true
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "GROBID never became ready"
+          docker ps --all
+          exit 1
       # Job-level `if:` cannot read secrets, so the gate is a step output.
       # No key (including every fork PR) still runs the GROBID leg and passes.
       - name: Detect a model key

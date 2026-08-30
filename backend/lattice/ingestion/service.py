@@ -70,7 +70,10 @@ from lattice.ingestion.pdf_utils import classify_pdf
 from lattice.ingestion.pipeline import IngestionPipeline, PipelineContext
 from lattice.landscape.coverage import (
     DEFAULT_PROBE_LIMIT,
+    PROBE_CONCURRENCY,
+    Probe,
     ProbeEvidence,
+    ProbeResult,
     QuestionMention,
     blind_spots,
     generate_probes,
@@ -967,13 +970,21 @@ class IngestionService:
         )
 
         k = top_k if top_k is not None else self.settings.rag.top_k_chunks
-        results = []
+        results: list[ProbeResult] = []
         if bank.probes:
             embeddings = self.chunk_embedder.embed_texts([p.text for p in bank.probes])
-            for probe, embedding in zip(bank.probes, embeddings, strict=True):
-                hits = await self.vectors.hybrid_search(
-                    probe.text, embedding, k, {"workspace_id": self.settings.workspace_id}
-                )
+            # One retrieval per probe. Run them with bounded concurrency: against
+            # pgvector these are dozens of independent round trips, and serializing
+            # them makes an interactive page wait for their sum. The bound stays
+            # under the default Postgres pool so probing cannot starve the API.
+            sem = asyncio.Semaphore(PROBE_CONCURRENCY)
+            scored: list[ProbeResult | None] = [None] * len(bank.probes)
+
+            async def probe_one(index: int, probe: Probe, embedding: list[float]) -> None:
+                async with sem:
+                    hits = await self.vectors.hybrid_search(
+                        probe.text, embedding, k, {"workspace_id": self.settings.workspace_id}
+                    )
                 evidence = [
                     ProbeEvidence(
                         paper_id=h.paper_id,
@@ -986,7 +997,19 @@ class IngestionService:
                     )
                     for h in hits
                 ]
-                results.append(score_probe(probe, evidence))
+                scored[index] = score_probe(probe, evidence)
+
+            await asyncio.gather(
+                *(
+                    probe_one(i, probe, embedding)
+                    for i, (probe, embedding) in enumerate(
+                        zip(bank.probes, embeddings, strict=True)
+                    )
+                )
+            )
+            # Order is the probe bank's, not completion order, so the response is
+            # deterministic for the same corpus.
+            results = [r for r in scored if r is not None]
 
         return {
             "row_facet": row_facet,

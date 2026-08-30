@@ -59,6 +59,9 @@ PARTIAL_MIN = 0.35
 SALIENCE_TARGET = 3
 #: Minimum content tokens for a probe to be scorable ("How does it work?" is not).
 MIN_PROBE_TOKENS = 2
+#: Concurrent retrievals while probing. Below the default Postgres pool_max (10)
+#: so a probe run cannot starve the rest of the API of connections.
+PROBE_CONCURRENCY = 8
 
 
 class ProbeSource(StrEnum):
