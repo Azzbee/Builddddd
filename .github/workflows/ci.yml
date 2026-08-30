@@ -108,6 +108,9 @@ jobs:
   e2e:
     name: E2E (live GROBID + LLM when keyed)
     runs-on: ubuntu-latest
+    # Its failure mode is "GROBID accepts the port but stalls"; without this the
+    # default is six hours of billed runner time.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -122,6 +125,14 @@ jobs:
         image: lfoppiano/grobid:0.8.1
         ports:
           - 8070:8070
+        env:
+          # GROBID 0.8.1 ships a JDK whose cgroup v2 detection cannot read the
+          # runner's cgroup layout: it dies at startup with
+          # "Cannot invoke CgroupInfo.getMountPoint() because anyController is
+          # null" before binding a port. Turning off container support skips that
+          # code path entirely; the JVM then sizes itself from host memory, which
+          # is what a dedicated runner has anyway.
+          JAVA_TOOL_OPTIONS: -XX:-UseContainerSupport
     env:
       LATTICE_E2E_GROBID_URL: http://localhost:8070
       # A live model run must never be able to spend real money on a bad loop.
@@ -136,16 +147,24 @@ jobs:
       - run: uv sync --locked --extra dev --extra api --extra llm
       - name: Wait for GROBID
         run: |
+          container=$(docker ps --all --quiet --filter ancestor=lfoppiano/grobid:0.8.1 | head -1)
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://localhost:8070/api/isalive; then
               echo "GROBID ready after ${attempt} attempt(s)"
               curl --silent http://localhost:8070/api/version || true
               exit 0
             fi
+            # A dead container will never become ready; say why now rather than
+            # burning five minutes and reporting a bare timeout.
+            if [ -n "$container" ] && [ "$(docker inspect -f '{{.State.Running}}' "$container")" != "true" ]; then
+              echo "GROBID exited before serving:"
+              docker logs --tail 40 "$container"
+              exit 1
+            fi
             sleep 5
           done
           echo "GROBID never became ready"
-          docker ps --all
+          [ -n "$container" ] && docker logs --tail 40 "$container"
           exit 1
       # Job-level `if:` cannot read secrets, so the gate is a step output.
       # No key (including every fork PR) still runs the GROBID leg and passes.

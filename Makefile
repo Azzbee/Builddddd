@@ -46,6 +46,7 @@ test-integration: ## Run live integration tests (needs LATTICE_TEST_PG_DSN / LAT
 	cd backend && uv run pytest -m integration -v
 
 test-e2e: ## Run the live GROBID end-to-end suite (starts GROBID, adds the LLM leg if LATTICE_E2E_LLM_MODEL is set)
+	-docker rm -f lattice-grobid-e2e 2>/dev/null
 	docker run --rm -d --name lattice-grobid-e2e -p 8070:8070 lfoppiano/grobid:0.8.1
 	@echo "waiting for GROBID..."
 	@until curl -sf http://localhost:8070/api/isalive > /dev/null; do sleep 5; done
